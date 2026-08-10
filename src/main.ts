@@ -39,6 +39,12 @@ async function main(): Promise<void> {
   const queue: Notification[] = [];
   const queuedIds = new Set<string>();
   let working = false;
+  // Draining stays off until first-run seeding has finished: a handle() that
+  // completes mid-seed would write state.json early (a crash then makes the
+  // restart skip seeding and answer the remaining backlog), and a handle()
+  // that fails mid-seed would release its queuedIds entry and let the seed
+  // misfile that mention as backlog. Enqueued work waits; nothing is lost.
+  let drainingEnabled = false;
 
   const enqueue = (notification: Notification, source: string) => {
     if (!wantedTypes.has(notification.notification_type)) return;
@@ -46,7 +52,7 @@ async function main(): Promise<void> {
     queuedIds.add(notification.id);
     queue.push(notification);
     console.log(`[${source}] queued ${notification.id} (${notification.title})`);
-    void drain();
+    if (drainingEnabled) void drain();
   };
 
   const drain = async () => {
@@ -157,10 +163,19 @@ async function main(): Promise<void> {
     // in queuedIds: they are new work, not backlog — never mark them read
     // or handled here; a crash before their run completes must leave them
     // recoverable by the backstop.
+    // Backlog = older than the daemon's start (with a margin for clock skew
+    // between this host and the server's created_at). The margin errs toward
+    // answering: a mention from just before boot is answered by the poll
+    // below rather than swallowed. The time cutoff also covers the window in
+    // which `taskshoot listen` was still connecting — a mention created then
+    // is not in queuedIds, but it is not backlog either.
+    const backlogCutoff = new Date(Date.now() - 60_000).toISOString();
     const seeded: string[] = [];
     for (;;) {
       const items = await listUnreadNotifications();
-      const backlog = items.filter((n) => !queuedIds.has(n.id));
+      const backlog = items.filter(
+        (n) => !queuedIds.has(n.id) && n.created_at < backlogCutoff,
+      );
       if (backlog.length === 0) break;
       await markReadIds(backlog.map((n) => n.id));
       seeded.push(...backlog.map((n) => n.id));
@@ -172,12 +187,13 @@ async function main(): Promise<void> {
     console.log(`first run: marked ${seeded.length} pre-existing notifications read and seeded the ledger`);
   }
 
+  drainingEnabled = true;
+  void drain();
   setInterval(poll, config.pollMinutes * 60 * 1000);
-  if (!state.isFirstRun) {
-    // One immediate sweep so mentions that arrived while the daemon was down
-    // are answered now, not up to pollMinutes later.
-    await poll();
-  }
+  // One immediate sweep: after downtime it answers what arrived while the
+  // daemon was down; after first-run seeding it answers the unread rows the
+  // backlog cutoff deliberately left for it.
+  await poll();
 }
 
 main().catch((error) => {
