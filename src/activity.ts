@@ -24,6 +24,30 @@ const ACTIVITY_TEXT = {
 const ACTIVITY_TTL_SECONDS = 90;
 const ACTIVITY_REFRESH_MS = 30_000;
 
+/** Global cap on concurrent activity CLI subprocesses across all tasks. A
+ * downtime backlog can enqueue ~100 distinct tasks in one synchronous poll
+ * sweep; without a cap their initial sets — and their synchronized 30-second
+ * refreshes, for as long as the serial agent queue takes to drain — would
+ * all fan out at once, starving the process/API capacity the agent needs. */
+const MAX_CONCURRENT_OPS = 4;
+let activeOps = 0;
+const opWaiters: Array<() => void> = [];
+
+async function withOpSlot(op: () => Promise<void>): Promise<void> {
+  // while, not if: a caller arriving between a slot release and the woken
+  // waiter actually running can take the slot first.
+  while (activeOps >= MAX_CONCURRENT_OPS) {
+    await new Promise<void>((resolve) => opWaiters.push(resolve));
+  }
+  activeOps += 1;
+  try {
+    await op();
+  } finally {
+    activeOps -= 1;
+    opWaiters.shift()?.();
+  }
+}
+
 interface Entry {
   count: number;
   chain: Promise<void>;
@@ -92,7 +116,8 @@ export class ActivityIndicator {
 
   private chainOp(entry: Entry, op: () => Promise<void>): Promise<void> {
     entry.queuedOps += 1;
-    entry.chain = entry.chain.then(op, op).finally(() => {
+    const run = () => withOpSlot(op);
+    entry.chain = entry.chain.then(run, run).finally(() => {
       entry.queuedOps -= 1;
     });
     return entry.chain;
