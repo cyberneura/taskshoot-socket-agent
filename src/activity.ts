@@ -15,13 +15,17 @@
 import { clearActivity, setActivity } from "./taskshoot.js";
 
 /** Refreshed while any mention for the task is queued or running; the TTL
- * bounds how long a stale indicator survives a crash. Refresh well inside
- * the TTL so one missed refresh does not blink the indicator off. */
+ * bounds how long a stale indicator survives a crash. The TTL is sized for
+ * the worst sustained case, not the healthy one: ~100 shown indicators
+ * (a full poll backlog) through 4 slots with degraded ~5s CLI calls yields
+ * ≈0.6 refreshes/s, so each indicator is revisited every ~170s — the TTL
+ * must sit above that or backlogged indicators expire mid-queue. The cost
+ * is a crashed run's stale indicator surviving up to 5 minutes. */
 const ACTIVITY_TEXT = {
   en: "Thinking about a reply…",
   ja: "回答を考えています…",
 };
-const ACTIVITY_TTL_SECONDS = 90;
+const ACTIVITY_TTL_SECONDS = 300;
 const ACTIVITY_REFRESH_MS = 30_000;
 
 /** Global cap on concurrent activity CLI subprocesses across all tasks. A
@@ -34,7 +38,7 @@ let activeOps = 0;
 // Two tiers: refreshes and clears of already-shown indicators jump ahead of
 // backlog initial sets. Behind ~100 queued sets each taking up to the 15s
 // exec timeout, a refresh would otherwise wait minutes while the server-side
-// TTL is only 90 seconds — the indicator would expire mid-run.
+// TTL would be outrun — the indicator would expire mid-run.
 const opWaiters: Array<() => void> = [];
 const urgentOpWaiters: Array<() => void> = [];
 // Bounded fairness, not strict urgent-first: enough already-shown tasks can
@@ -42,7 +46,7 @@ const urgentOpWaiters: Array<() => void> = [];
 // refresh per 30s vs 4 slots), and a strict priority would then starve the
 // remaining initial sets for as long as the agent queue takes. Capping the
 // urgent streak reserves ≥1 grant in (limit+1) for initial sets; a refresh
-// delayed by that detour stays well inside the 90s TTL.
+// delayed by that detour stays well inside the TTL.
 const URGENT_STREAK_LIMIT = 3;
 let urgentStreak = 0;
 
@@ -116,14 +120,14 @@ export class ActivityIndicator {
       // The initial set is the only non-urgent op: nothing is on screen
       // yet, so it may wait behind other tasks' backlog. Refreshes and
       // clears act on an indicator that is already showing and jump the
-      // global queue — a starved refresh would let the 90s TTL expire.
+      // global queue — a starved refresh would let the TTL expire.
       ready = this.chainOp(held, false, () =>
         setActivity(taskArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS),
       );
       held.timer = setInterval(() => {
         // Coalesce: a refresh slower than the interval must not queue ticks
         // behind itself — the backlog would outlive the run and delay the
-        // final clear. A skipped tick costs nothing: the TTL is three
+        // final clear. A skipped tick costs nothing: the TTL is many
         // intervals long.
         if (held.queuedOps === 0) {
           void this.chainOp(held, true, () =>
