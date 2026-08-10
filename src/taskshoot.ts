@@ -90,24 +90,26 @@ const ACTIVITY_EXEC_TIMEOUT_MS = 15_000;
 
 /** Whether the installed CLI knows `task activity` (added in 0.8.0). Checked
  * once; on an older CLI the indicator is skipped rather than failing every
- * mention. */
-let activitySupported: boolean | null = null;
+ * mention. The promise itself is cached (not just the result): activity
+ * calls for different tasks run concurrently, and each racing caller would
+ * otherwise spawn its own `--help` subprocess. */
+let activityCheck: Promise<boolean> | null = null;
 
-async function activityAvailable(): Promise<boolean> {
-  if (activitySupported === null) {
+function activityAvailable(): Promise<boolean> {
+  activityCheck ??= (async () => {
     try {
       await execFileAsync(config.taskshootBin, ["task", "activity", "--help"], {
         timeout: ACTIVITY_EXEC_TIMEOUT_MS,
       });
-      activitySupported = true;
+      return true;
     } catch {
-      activitySupported = false;
       console.error(
         "[activity] `taskshoot task activity` is unavailable (CLI < 0.8.0); the working indicator is disabled",
       );
+      return false;
     }
-  }
-  return activitySupported;
+  })();
+  return activityCheck;
 }
 
 /** Transient "working on it" indicator on the task thread. Best-effort: the
