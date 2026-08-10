@@ -109,7 +109,7 @@ async function main(): Promise<void> {
     try {
       const items = await listUnreadNotifications();
       // Oldest first, so replies land in thread order.
-      items.sort((a, b) => (a.id < b.id ? -1 : 1));
+      items.sort((a, b) => a.created_at.localeCompare(b.created_at));
       for (const notification of items) {
         // Handled but still unread = a mark-read that failed earlier. Retry
         // it here: left alone, such rows pile up until they push real
@@ -126,6 +126,13 @@ async function main(): Promise<void> {
     }
   };
 
+  // The listener starts BEFORE first-run seeding: a mention created while
+  // the seed is running is then held in the queue, and the seed skips
+  // anything already queued — so it cannot be filed away as pre-existing
+  // backlog. (Started after seeding, the same mention would be listed by the
+  // seed, marked handled, and the later WS delivery dropped.)
+  startListener((notification) => enqueue(notification, "ws"));
+
   if (state.isFirstRun) {
     // Very first run on this host: the unread backlog predates the daemon.
     // Answering weeks-old mentions in bulk would be noise (and the requesters
@@ -136,11 +143,13 @@ async function main(): Promise<void> {
     // answered) as the newer rows drain — and unread rows of unsubscribed
     // types would crowd mentions out of the backstop's window. Nothing else
     // consumes a bot's notification inbox.
-    // This runs BEFORE the listener starts, so anything arriving from now on
-    // is seen by the WS (or the next poll) and answered — the seed can only
-    // contain what predates it.
     const items = await listUnreadNotifications();
-    for (const notification of items) state.markHandled(notification.id);
+    for (const notification of items) {
+      // Queued = the WS (already listening) delivered it while we were
+      // seeding, so it is new work, not backlog. markAllRead below still
+      // marks it read, which is fine: it is in the in-process queue.
+      if (!queuedIds.has(notification.id)) state.markHandled(notification.id);
+    }
     await markAllRead();
     // Persist even when the backlog was empty: the state file's existence is
     // what marks first-run seeding as done.
@@ -148,7 +157,6 @@ async function main(): Promise<void> {
     console.log(`first run: seeded the ledger with ${items.length} pre-existing notifications`);
   }
 
-  startListener((notification) => enqueue(notification, "ws"));
   setInterval(poll, config.pollMinutes * 60 * 1000);
   if (!state.isFirstRun) {
     // One immediate sweep so mentions that arrived while the daemon was down

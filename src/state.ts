@@ -32,8 +32,15 @@ function load(): StateFile | null {
   let raw: string;
   try {
     raw = fs.readFileSync(stateFilePath(), "utf8");
-  } catch {
-    return null; // no file yet: a genuine first run
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null; // no file yet: a genuine first run
+    }
+    // Fail closed on any other read error (EACCES, transient I/O): treating
+    // it as a first run would discard the ledger and mark the whole unread
+    // inbox read without answering it. Crash instead and let the supervisor
+    // retry once the filesystem recovers.
+    throw error;
   }
   try {
     const parsed = JSON.parse(raw);

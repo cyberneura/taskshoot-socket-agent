@@ -18,7 +18,10 @@ fi
 
 export PATH="${TSSA_EXTRA_PATH:+${TSSA_EXTRA_PATH}:}${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
 
-command -v taskshoot >/dev/null || { echo "taskshoot is not on PATH" >&2; exit 1; }
+command -v "${TSSA_TASKSHOOT_BIN:-taskshoot}" >/dev/null || {
+  echo "${TSSA_TASKSHOOT_BIN:-taskshoot} is not on PATH" >&2
+  exit 1
+}
 command -v node >/dev/null || { echo "node is not on PATH" >&2; exit 1; }
 
 if [ ! -d node_modules ]; then
