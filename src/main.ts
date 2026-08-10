@@ -49,7 +49,10 @@ async function main(): Promise<void> {
   // queued mention holds one refcount on its task's indicator; the release
   // is looked up by notification id at dequeue time.
   const activity = new ActivityIndicator();
-  const activityReleases = new Map<string, () => Promise<void>>();
+  const activityHolds = new Map<
+    string,
+    { ready: Promise<void>; release: () => Promise<void> }
+  >();
   let working = false;
   // Draining stays off until first-run seeding has finished: a handle() that
   // completes mid-seed would write state.json early (a crash then makes the
@@ -64,7 +67,7 @@ async function main(): Promise<void> {
     queuedIds.add(notification.id);
     queue.push(notification);
     const taskArgs = cliTaskArgs(notification);
-    if (taskArgs) activityReleases.set(notification.id, activity.acquire(taskArgs));
+    if (taskArgs) activityHolds.set(notification.id, activity.acquire(taskArgs));
     console.log(`[${source}] queued ${notification.id} (${notification.title})`);
     if (drainingEnabled) void drain();
   };
@@ -78,7 +81,12 @@ async function main(): Promise<void> {
         // until the run finished: an agent run takes minutes, and a poll (or
         // the WS catch-up) firing mid-run must not re-enqueue the mention we
         // are answering right now — that was a real double-reply path.
+        const hold = activityHolds.get(next.id);
         if (!state.isHandled(next.id)) {
+          // The initial set must land before the run: a fast reply posted
+          // ahead of it would have nothing to clear server-side, and the
+          // late set would show "thinking" after the answer.
+          if (hold) await hold.ready;
           await handle(next);
         }
         queuedIds.delete(next.id);
@@ -86,9 +94,8 @@ async function main(): Promise<void> {
         // indicator server-side, but a NO_REPLY or failed run posts
         // nothing) — and also for skipped duplicates, or the refcount leaks
         // and the indicator never clears.
-        const release = activityReleases.get(next.id);
-        activityReleases.delete(next.id);
-        if (release) await release();
+        activityHolds.delete(next.id);
+        if (hold) await hold.release();
       }
     } finally {
       working = false;

@@ -38,10 +38,13 @@ export class ActivityIndicator {
   // mentioned over the process lifetime.
   private readonly entries = new Map<string, Entry>();
 
-  /** Start (or join) the indicator for a task. Returns the release: call it
-   * once when this mention is done; the indicator clears when the last
-   * holder releases. */
-  acquire(taskArgs: string[]): () => Promise<void> {
+  /** Start (or join) the indicator for a task. `ready` settles once the
+   * initial set (or whatever was in flight at acquire time) has landed —
+   * await it before running the agent, or a fast reply could be posted
+   * before the set and the late set would show "thinking" after the answer.
+   * Call `release` once when this mention is done; the indicator clears
+   * when the last holder releases. */
+  acquire(taskArgs: string[]): { ready: Promise<void>; release: () => Promise<void> } {
     const key = taskArgs.join("\u0000");
     let entry = this.entries.get(key);
     if (!entry) {
@@ -50,8 +53,9 @@ export class ActivityIndicator {
     }
     const held = entry;
     held.count += 1;
+    let ready = held.chain;
     if (held.count === 1) {
-      void this.chainOp(held, () =>
+      ready = this.chainOp(held, () =>
         setActivity(taskArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS),
       );
       held.timer = setInterval(() => {
@@ -67,7 +71,7 @@ export class ActivityIndicator {
       }, ACTIVITY_REFRESH_MS);
     }
     let released = false;
-    return () => {
+    const release = () => {
       if (released) return Promise.resolve();
       released = true;
       held.count -= 1;
@@ -83,6 +87,7 @@ export class ActivityIndicator {
       held.timer = undefined;
       return this.chainOp(held, () => clearActivity(taskArgs));
     };
+    return { ready, release };
   }
 
   private chainOp(entry: Entry, op: () => Promise<void>): Promise<void> {
