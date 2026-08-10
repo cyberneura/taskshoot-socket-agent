@@ -176,7 +176,20 @@ async function main(): Promise<void> {
       const backlog = items.filter(
         (n) => !queuedIds.has(n.id) && n.created_at < backlogCutoff,
       );
-      if (backlog.length === 0) break;
+      if (backlog.length === 0) {
+        // The list API has no pagination cursor, so a page consisting
+        // entirely of protected rows (queued / newer than the cutoff) would
+        // hide any older backlog behind it — that takes 100+ mentions within
+        // a minute of first boot. It cannot be reached from here; those rows
+        // would surface in later polls and be answered. Say so, loudly.
+        if (items.length >= 100) {
+          console.error(
+            "first run: the unread page is full of new notifications; " +
+              "backlog hidden behind it (if any) will be ANSWERED by later polls",
+          );
+        }
+        break;
+      }
       await markReadIds(backlog.map((n) => n.id));
       seeded.push(...backlog.map((n) => n.id));
     }

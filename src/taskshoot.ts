@@ -42,12 +42,18 @@ export async function whoAmI(): Promise<{ id: string; display_name: string }> {
 }
 
 /**
- * Known limitation: the CLI has no server-side type filter for this list, so
- * 100+ unread notifications of unsubscribed types (e.g. task_assigned piling
- * up on a busy bot) could push mentions past the limit and blind the polling
- * backstop. The caller's mark-read cleanup keeps handled rows from
- * contributing to that pile; a --types filter on `notifications list` would
- * remove the limitation for good.
+ * Known limitation: the CLI offers neither a server-side type filter nor a
+ * pagination cursor for this list, so only the newest 100 unread rows are
+ * reachable. Consequences, all bounded by the same missing cursor:
+ * - 100+ unread rows of unsubscribed types could push mentions out of the
+ *   window (mitigated by the caller's mark-read cleanup);
+ * - during a first-run seed, backlog hidden behind a full page of protected
+ *   rows cannot be reached (requires 100+ mentions within a minute of first
+ *   boot — logged when detected);
+ * - after long downtime with 100+ unread mentions, older hidden rows are
+ *   only reached on later polls, so cross-poll ordering is not guaranteed.
+ * Adding `--types` and a `--before <id>` cursor to `taskshoot notifications
+ * list` would remove all three for good.
  */
 export async function listUnreadNotifications(): Promise<Notification[]> {
   const { items } = await runJson<{ items: Notification[] }>([
