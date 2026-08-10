@@ -6,13 +6,29 @@
  * starts it (it takes the single-instance lock and connects immediately),
  * so there would otherwise be no safe way to smoke-test an install.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const distMain = new URL("../dist/main.js", import.meta.url);
+
+/** An install can silently skip the compile step (pnpm without
+ * `--allow-build`, npm installing a git url globally), leaving a linked
+ * executable with nothing behind it. `--version` therefore doubles as the
+ * install check — it is the only invocation that can be run safely, since
+ * starting the daemon takes the single-instance lock and connects. */
+const NOT_BUILT =
+  "taskshoot-socket-agent is installed but not built (dist/ is missing).\n" +
+  "Reinstall allowing the build step:\n" +
+  "  pnpm add -g --allow-build=taskshoot-socket-agent github:cyberneura/taskshoot-socket-agent\n" +
+  "From a source checkout: pnpm install && pnpm build";
 
 if (args.includes("--version") || args.includes("-V")) {
   console.log(pkg.version);
+  if (!existsSync(distMain)) {
+    console.error(NOT_BUILT);
+    process.exit(1);
+  }
   process.exit(0);
 }
 
@@ -48,14 +64,9 @@ if (args.length > 0) {
   process.exit(2);
 }
 
-try {
-  await import("../dist/main.js");
-} catch (error) {
-  if (error?.code === "ERR_MODULE_NOT_FOUND") {
-    console.error(
-      "taskshoot-socket-agent is not built: run `pnpm install && pnpm build` in the source checkout.",
-    );
-    process.exit(1);
-  }
-  throw error;
+if (!existsSync(distMain)) {
+  console.error(NOT_BUILT);
+  process.exit(1);
 }
+
+await import("../dist/main.js");

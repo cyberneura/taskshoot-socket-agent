@@ -51,9 +51,11 @@ pnpm add -g --allow-build=taskshoot-socket-agent \
 taskshoot-socket-agent --version
 ```
 
-The install compiles the TypeScript itself, so no checkout is needed. The
-daemon takes no arguments and runs in the foreground until stopped; `--help`
-lists the environment variables.
+The install compiles the TypeScript itself, so no checkout is needed.
+`--version` doubles as the install check: it exits non-zero if the compile
+step was skipped, which is the failure mode the flag below prevents. The
+daemon itself takes no arguments and runs in the foreground until stopped;
+`--help` lists the environment variables.
 
 Two install caveats, both from the compile step:
 
