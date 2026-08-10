@@ -110,21 +110,29 @@ async function main(): Promise<void> {
     const activityArgs = cliTaskArgs(notification);
     let activityTimer: NodeJS.Timeout | undefined;
     let activityChain: Promise<void> = Promise.resolve();
+    let queuedActivityOps = 0;
     const chainActivity = (op: () => Promise<void>): Promise<void> => {
-      activityChain = activityChain.then(op, op);
+      queuedActivityOps += 1;
+      activityChain = activityChain.then(op, op).finally(() => {
+        queuedActivityOps -= 1;
+      });
       return activityChain;
     };
     if (activityArgs) {
       await chainActivity(() =>
         setActivity(activityArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS),
       );
-      activityTimer = setInterval(
-        () =>
+      activityTimer = setInterval(() => {
+        // Coalesce: a refresh slower than the interval must not queue ticks
+        // behind itself — the backlog would outlive the run and delay the
+        // final clear (and every later mention in this serial queue). A
+        // skipped tick costs nothing: the TTL is three intervals long.
+        if (queuedActivityOps === 0) {
           void chainActivity(() =>
             setActivity(activityArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS),
-          ),
-        ACTIVITY_REFRESH_MS,
-      );
+          );
+        }
+      }, ACTIVITY_REFRESH_MS);
     }
     try {
       let run;
