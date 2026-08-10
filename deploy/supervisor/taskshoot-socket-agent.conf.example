@@ -1,0 +1,24 @@
+; supervisor program for taskshoot-socket-agent (Ubuntu hosts).
+;
+; Copy to /etc/supervisor/conf.d/taskshoot-socket-agent.conf and adjust the
+; paths and user. Then: supervisorctl reread && supervisorctl update
+;
+; The log file lives under the user's home (mode 750), not /var/log/supervisor:
+; supervisor creates program logs world-readable, and this log carries task
+; titles and conversation fragments.
+
+[program:taskshoot-socket-agent]
+command=/home/USER/taskshoot-socket-agent/bin/start.sh
+directory=/home/USER/taskshoot-socket-agent
+user=USER
+autostart=true
+autorestart=true
+redirect_stderr=true
+stdout_logfile=/home/USER/cronlog/taskshoot-socket-agent.log
+stdout_logfile_maxbytes=50MB
+stdout_logfile_backups=10
+environment=HOME="/home/USER",USER="USER"
+startsecs=10
+stopwaitsecs=30
+killasgroup=true
+stopasgroup=true

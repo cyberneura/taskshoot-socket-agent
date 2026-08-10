@@ -1,0 +1,25 @@
+{
+  "name": "taskshoot-socket-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Taskshoot mention-response daemon: subscribes to the notification WebSocket via `taskshoot listen` and answers mentions with the Claude Agent SDK",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "dev": "tsx src/main.ts",
+    "check": "tsc --noEmit",
+    "test": "node --test --import tsx test/*.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.220"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

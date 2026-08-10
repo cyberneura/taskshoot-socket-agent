@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent for taskshoot-socket-agent (macOS hosts).
+
+  Copy to ~/Library/LaunchAgents/com.cyberneura.taskshoot-socket-agent.plist,
+  replace USER, then:
+
+    launchctl bootstrap gui/$(id -u) \
+      ~/Library/LaunchAgents/com.cyberneura.taskshoot-socket-agent.plist
+
+  KeepAlive restarts the daemon if it dies; ThrottleInterval keeps a crash
+  loop from spinning.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.cyberneura.taskshoot-socket-agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/USER/taskshoot-socket-agent/bin/start.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/USER/taskshoot-socket-agent</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/USER/cronlog/taskshoot-socket-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/USER/cronlog/taskshoot-socket-agent.log</string>
+</dict>
+</plist>
