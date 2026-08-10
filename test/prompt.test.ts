@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { buildSystemPromptAppend, cliTaskRef } from "../src/prompt.js";
+import { cliTaskArgs } from "../src/taskshoot.js";
 import type { Notification } from "../src/taskshoot.js";
 
 function notification(task: Notification["task"]): Notification {
@@ -32,6 +33,24 @@ test("cliTaskRef uses KEY-N for tracked and uuid --project for untracked tasks",
   assert.equal(cliTaskRef(tracked), "DEV-12");
   assert.equal(cliTaskRef(untracked), "uuid-1 --project DEV");
   assert.equal(cliTaskRef(notification(null)), null);
+});
+
+test("cliTaskArgs mirrors cliTaskRef as argv (tracked / untracked / no task)", () => {
+  // Arrange
+  const tracked = notification({
+    id: "uuid-1",
+    project_key: "DEV",
+    number: 12,
+    title: "t",
+    org_code_name: "org",
+    ref: "DEV-12",
+    bot_ready: false,
+  });
+  const untracked = notification({ ...tracked.task!, number: null, ref: null });
+  // Act / Assert
+  assert.deepEqual(cliTaskArgs(tracked), ["DEV-12"]);
+  assert.deepEqual(cliTaskArgs(untracked), ["uuid-1", "--project", "DEV"]);
+  assert.equal(cliTaskArgs(notification(null)), null);
 });
 
 test("the system prompt carries the bot name and the site extra", () => {

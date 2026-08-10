@@ -17,12 +17,26 @@ import { buildMentionPrompt, buildSystemPromptAppend, cliTaskRef } from "./promp
 import { runAgent, type RunError } from "./runner.js";
 import { State } from "./state.js";
 import {
+  clearActivity,
+  cliTaskArgs,
   listUnreadNotifications,
   markRead,
   markReadIds,
+  setActivity,
   whoAmI,
   type Notification,
 } from "./taskshoot.js";
+
+/** The "thinking" indicator shown on the thread while a mention is being
+ * answered. Refreshed while the run is alive; the TTL bounds how long a stale
+ * indicator survives a crash. Refresh well inside the TTL so one missed
+ * refresh does not blink the indicator off. */
+const ACTIVITY_TEXT = {
+  en: "Thinking about a reply to the mention…",
+  ja: "メンションの回答を考えています…",
+};
+const ACTIVITY_TTL_SECONDS = 90;
+const ACTIVITY_REFRESH_MS = 30_000;
 
 async function main(): Promise<void> {
   // Captured before any startup work: whoAmI() can retry for minutes, and the
@@ -86,6 +100,20 @@ async function main(): Promise<void> {
       `handling ${notification.id} on ${cliTaskRef(notification) ?? "(no task)"}` +
         (resumeSessionId ? ` (resuming session ${resumeSessionId})` : ""),
     );
+    // Show "thinking…" on the thread while the agent works, and keep it
+    // alive across the (minutes-long) run. Cleared in the finally: posting a
+    // reply clears it server-side, but a NO_REPLY or failed run posts
+    // nothing, and an explicit clear also converges the race where a slow
+    // refresh lands after the reply (the CLAUDE.md activity notes' pattern).
+    const activityArgs = cliTaskArgs(notification);
+    let activityTimer: NodeJS.Timeout | undefined;
+    if (activityArgs) {
+      await setActivity(activityArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS);
+      activityTimer = setInterval(
+        () => void setActivity(activityArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS),
+        ACTIVITY_REFRESH_MS,
+      );
+    }
     try {
       let run;
       try {
@@ -112,6 +140,9 @@ async function main(): Promise<void> {
       await markRead(notification.id);
     } catch (error) {
       console.error(`agent run failed for ${notification.id}; the backstop will retry:`, error);
+    } finally {
+      if (activityTimer) clearInterval(activityTimer);
+      if (activityArgs) await clearActivity(activityArgs);
     }
   };
 

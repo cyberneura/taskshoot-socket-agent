@@ -74,6 +74,72 @@ export async function markReadIds(ids: string[]): Promise<void> {
   await execFileAsync(config.taskshootBin, ["notifications", "read", ...ids]);
 }
 
+/** Task reference arguments for the CLI: ["KEY-N"] for tracked tasks,
+ * ["<uuid>", "--project", "<KEY>"] for untracked ones. */
+export function cliTaskArgs(notification: Notification): string[] | null {
+  const task = notification.task;
+  if (!task) return null;
+  if (task.ref) return [task.ref];
+  return [task.id, "--project", task.project_key];
+}
+
+/** Whether the installed CLI knows `task activity` (added in 0.8.0). Checked
+ * once; on an older CLI the indicator is skipped rather than failing every
+ * mention. */
+let activitySupported: boolean | null = null;
+
+async function activityAvailable(): Promise<boolean> {
+  if (activitySupported === null) {
+    try {
+      await execFileAsync(config.taskshootBin, ["task", "activity", "--help"]);
+      activitySupported = true;
+    } catch {
+      activitySupported = false;
+      console.error(
+        "[activity] `taskshoot task activity` is unavailable (CLI < 0.8.0); the working indicator is disabled",
+      );
+    }
+  }
+  return activitySupported;
+}
+
+/** Transient "working on it" indicator on the task thread. Best-effort: the
+ * indicator is cosmetic, so failures are logged and never interrupt the run.
+ * The TTL bounds how long a stale indicator can outlive a crashed run. */
+export async function setActivity(
+  taskArgs: string[],
+  text: { en: string; ja: string },
+  ttlSeconds: number,
+): Promise<void> {
+  if (!(await activityAvailable())) return;
+  try {
+    await execFileAsync(config.taskshootBin, [
+      "task",
+      "activity",
+      ...taskArgs,
+      "--text",
+      text.en,
+      "--text-ja",
+      text.ja,
+      "--ttl",
+      String(ttlSeconds),
+    ]);
+  } catch (error) {
+    console.error("[activity] set failed:", error);
+  }
+}
+
+/** Take the indicator down now. Also called after the agent posted its reply
+ * (the server clears on post, but a NO_REPLY or failed run posts nothing). */
+export async function clearActivity(taskArgs: string[]): Promise<void> {
+  if (!(await activityAvailable())) return;
+  try {
+    await execFileAsync(config.taskshootBin, ["task", "activity", ...taskArgs, "--clear"]);
+  } catch (error) {
+    console.error("[activity] clear failed:", error);
+  }
+}
+
 /** Mark a notification read. Failures are logged, not thrown: the handled-id
  * ledger is what prevents double replies, and a mention must not be retried
  * (and answered twice) because mark-read hiccuped. Rows left unread by a
