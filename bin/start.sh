@@ -27,6 +27,9 @@ command -v node >/dev/null || { echo "node is not on PATH" >&2; exit 1; }
 if [ ! -d node_modules ]; then
   pnpm install --frozen-lockfile
 fi
-pnpm run build
+# tsc is invoked directly instead of `pnpm run build`: pnpm 11 runs a
+# dependency status check before `run` scripts and aborts on hosts where the
+# lockfile's build scripts were not interactively approved.
+./node_modules/.bin/tsc
 
 exec node dist/main.js
