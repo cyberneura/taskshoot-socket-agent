@@ -7,6 +7,11 @@
 ; supervisor creates program logs world-readable, and this log carries task
 ; titles and conversation fragments.
 
+; Globally installed (pnpm add -g github:cyberneura/taskshoot-socket-agent):
+; point command= at `command -v taskshoot-socket-agent` and drop directory=.
+; start.sh is what reads .env and extends PATH, and a global install does not
+; use it, so PATH and every TSSA_* variable must be listed in environment=.
+
 [program:taskshoot-socket-agent]
 command=/home/USER/taskshoot-socket-agent/bin/start.sh
 directory=/home/USER/taskshoot-socket-agent

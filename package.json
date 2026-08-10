@@ -1,18 +1,43 @@
 {
   "name": "taskshoot-socket-agent",
   "version": "0.1.0",
-  "private": true,
   "description": "Taskshoot mention-response daemon: subscribes to the notification WebSocket via `taskshoot listen` and answers mentions with the Claude Agent SDK",
   "type": "module",
+  "license": "MIT OR Apache-2.0",
+  "author": "Yotsuyanagi <t@ytyng.com>",
+  "homepage": "https://github.com/cyberneura/taskshoot-socket-agent",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cyberneura/taskshoot-socket-agent.git"
+  },
+  "keywords": [
+    "taskshoot",
+    "claude",
+    "agent",
+    "daemon",
+    "bot"
+  ],
   "engines": {
     "node": ">=20"
   },
+  "bin": {
+    "taskshoot-socket-agent": "bin/taskshoot-socket-agent.mjs"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "deploy",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/main.js",
     "dev": "tsx src/main.ts",
     "check": "tsc --noEmit",
-    "test": "node --test --import tsx test/*.test.ts"
+    "test": "node --test --import tsx test/*.test.ts",
+    "prepare": "tsc"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.220"

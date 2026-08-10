@@ -37,23 +37,38 @@ Claude Agent SDK run ──> taskshoot task comment <ref> "..."
 
 ## Requirements
 
-- Node.js >= 20 and pnpm
+- Node.js >= 20 (pnpm only for a source checkout)
 - The [`taskshoot` CLI](https://github.com/cyberneura/taskshoot-cli) >= 0.7.0
   on PATH, authenticated as the bot user (a **write** API key; see
   `taskshoot config init`)
 - Claude Code installed and authenticated on the host
 
-## Running
+## Installing
 
 ```bash
-pnpm install
-pnpm run build
+pnpm add -g github:cyberneura/taskshoot-socket-agent
+taskshoot-socket-agent --version
+```
+
+The install compiles the TypeScript itself, so no checkout is needed. The
+daemon takes no arguments and runs in the foreground until stopped; `--help`
+lists the environment variables.
+
+`npm install -g <git url>` does not work here: npm omits devDependencies for
+global git installs, so the compile step has no compiler. Use pnpm, or
+install from a source checkout.
+
+## Running from a source checkout
+
+```bash
+pnpm install             # also builds (the prepare script runs tsc)
 node dist/main.js        # or: pnpm run dev
 ```
 
-`bin/start.sh` is the supervised entry point: it sets up PATH, reads an
-optional `.env`, installs/builds when needed and execs the daemon. Deployment
-templates:
+`bin/start.sh` is the supervised entry point for a checkout: it sets up PATH,
+reads an optional `.env`, installs/builds when needed and execs the daemon.
+A global install uses neither — configure it through the supervisor's own
+environment. Deployment templates (both variants):
 
 - Ubuntu (supervisor): `deploy/supervisor/taskshoot-socket-agent.conf.example`
 - macOS (launchd): `deploy/launchd/com.cyberneura.taskshoot-socket-agent.plist.example`
