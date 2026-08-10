@@ -20,6 +20,26 @@ pnpm dev          # tsx で直接起動 (要 taskshoot CLI 認証済み)
 pnpm start        # dist/main.js を起動
 ```
 
+## 配布
+
+`pnpm add -g --allow-build=taskshoot-socket-agent github:cyberneura/taskshoot-socket-agent`
+でインストールできる (`prepare` が tsc を走らせるので dist をコミットしなくてよい)。
+インストール時ビルドに依存しているため制約が 2 つある。実測で確認したもの:
+
+- `--allow-build` が必要 (pnpm 10.29 で確認。10.17 では不要だった)。現行 pnpm は
+  git 由来パッケージの build script を allowlist 無しでは実行しない
+- **`npm install -g <git url>` は不可**: npm はグローバル git インストールで
+  devDependencies を入れないため tsc が無い (`--include=dev` でも変わらない)
+
+両方とも「インストール時にビルドする」ことが原因なので、npm レジストリへ公開すれば
+消える (公開物には `files` の dist が入るのでビルド不要。`npm pack` の tarball を
+`-g` インストールして確認済み)。未公開。公開は `npm login && npm publish`。
+
+- `bin/taskshoot-socket-agent.mjs` — `bin` エントリ。`--version` / `--help` は
+  dist/main.js を import せずに答える (import した時点でデーモンが起動して
+  ロックを取るため、インストールの疎通確認ができなくなる)
+- `files` に載っていないものは配布物に入らない。ソース追加時は確認する
+
 ## 構成
 
 - `src/main.ts` — エントリポイント。WS 購読 + ポーリングバックストップ + 直列キュー

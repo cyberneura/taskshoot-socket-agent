@@ -37,23 +37,46 @@ Claude Agent SDK run ──> taskshoot task comment <ref> "..."
 
 ## Requirements
 
-- Node.js >= 20 and pnpm
+- Node.js >= 20 (pnpm only for a source checkout)
 - The [`taskshoot` CLI](https://github.com/cyberneura/taskshoot-cli) >= 0.7.0
   on PATH, authenticated as the bot user (a **write** API key; see
   `taskshoot config init`)
 - Claude Code installed and authenticated on the host
 
-## Running
+## Installing
 
 ```bash
-pnpm install
-pnpm run build
+pnpm add -g --allow-build=taskshoot-socket-agent \
+  github:cyberneura/taskshoot-socket-agent
+taskshoot-socket-agent --version
+```
+
+The install compiles the TypeScript itself, so no checkout is needed.
+`--version` doubles as the install check: it exits non-zero if the compile
+step was skipped, which is the failure mode the flag below prevents. The
+daemon itself takes no arguments and runs in the foreground until stopped;
+`--help` lists the environment variables.
+
+Two install caveats, both from the compile step:
+
+- `--allow-build` is what lets that compile run. Current pnpm refuses build
+  scripts in git-hosted packages unless the package is allowlisted (verified
+  on 10.29; 10.17 still installed without the flag).
+- `npm install -g <git url>` cannot work at all: npm omits devDependencies
+  for global git installs, so there is no compiler to run. Use pnpm, or
+  install from a source checkout.
+
+## Running from a source checkout
+
+```bash
+pnpm install             # also builds (the prepare script runs tsc)
 node dist/main.js        # or: pnpm run dev
 ```
 
-`bin/start.sh` is the supervised entry point: it sets up PATH, reads an
-optional `.env`, installs/builds when needed and execs the daemon. Deployment
-templates:
+`bin/start.sh` is the supervised entry point for a checkout: it sets up PATH,
+reads an optional `.env`, installs/builds when needed and execs the daemon.
+A global install uses neither — configure it through the supervisor's own
+environment. Deployment templates (both variants):
 
 - Ubuntu (supervisor): `deploy/supervisor/taskshoot-socket-agent.conf.example`
 - macOS (launchd): `deploy/launchd/com.cyberneura.taskshoot-socket-agent.plist.example`
