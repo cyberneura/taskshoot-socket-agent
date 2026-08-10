@@ -83,6 +83,11 @@ export function cliTaskArgs(notification: Notification): string[] | null {
   return [task.id, "--project", task.project_key];
 }
 
+/** Hard cap on one activity CLI call. The indicator is cosmetic, but its
+ * calls sit on the serial handling chain — without a timeout a stalled call
+ * (network black hole) would wedge every later mention behind it. */
+const ACTIVITY_EXEC_TIMEOUT_MS = 15_000;
+
 /** Whether the installed CLI knows `task activity` (added in 0.8.0). Checked
  * once; on an older CLI the indicator is skipped rather than failing every
  * mention. */
@@ -91,7 +96,9 @@ let activitySupported: boolean | null = null;
 async function activityAvailable(): Promise<boolean> {
   if (activitySupported === null) {
     try {
-      await execFileAsync(config.taskshootBin, ["task", "activity", "--help"]);
+      await execFileAsync(config.taskshootBin, ["task", "activity", "--help"], {
+        timeout: ACTIVITY_EXEC_TIMEOUT_MS,
+      });
       activitySupported = true;
     } catch {
       activitySupported = false;
@@ -113,17 +120,21 @@ export async function setActivity(
 ): Promise<void> {
   if (!(await activityAvailable())) return;
   try {
-    await execFileAsync(config.taskshootBin, [
-      "task",
-      "activity",
-      ...taskArgs,
-      "--text",
-      text.en,
-      "--text-ja",
-      text.ja,
-      "--ttl",
-      String(ttlSeconds),
-    ]);
+    await execFileAsync(
+      config.taskshootBin,
+      [
+        "task",
+        "activity",
+        ...taskArgs,
+        "--text",
+        text.en,
+        "--text-ja",
+        text.ja,
+        "--ttl",
+        String(ttlSeconds),
+      ],
+      { timeout: ACTIVITY_EXEC_TIMEOUT_MS },
+    );
   } catch (error) {
     console.error("[activity] set failed:", error);
   }
@@ -134,7 +145,9 @@ export async function setActivity(
 export async function clearActivity(taskArgs: string[]): Promise<void> {
   if (!(await activityAvailable())) return;
   try {
-    await execFileAsync(config.taskshootBin, ["task", "activity", ...taskArgs, "--clear"]);
+    await execFileAsync(config.taskshootBin, ["task", "activity", ...taskArgs, "--clear"], {
+      timeout: ACTIVITY_EXEC_TIMEOUT_MS,
+    });
   } catch (error) {
     console.error("[activity] clear failed:", error);
   }
