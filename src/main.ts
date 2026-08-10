@@ -25,6 +25,10 @@ import {
 } from "./taskshoot.js";
 
 async function main(): Promise<void> {
+  // Captured before any startup work: whoAmI() can retry for minutes, and the
+  // first-run backlog cutoff must predate everything this process might have
+  // been expected to answer.
+  const bootedAt = Date.now();
   acquireSingleInstanceLock();
   const me = await whoAmI();
   console.log(`authenticated as ${me.display_name} (${me.id})`);
@@ -117,10 +121,16 @@ async function main(): Promise<void> {
       // Oldest first, so replies land in thread order.
       items.sort((a, b) => a.created_at.localeCompare(b.created_at));
       for (const notification of items) {
-        // Handled but still unread = a mark-read that failed earlier. Retry
-        // it here: left alone, such rows pile up until they push real
-        // mentions past the list limit, and once their ids age out of the
-        // ledger they would be answered a second time.
+        // Rows this daemon will never answer must not stay unread, or they
+        // pile up until they push real mentions past the capped list:
+        // - unsubscribed types (the daemon owns this bot's inbox, nothing
+        //   else reads it),
+        // - handled-but-unread rows (a mark-read that failed earlier; once
+        //   their ids aged out of the ledger they would even be re-answered).
+        if (!wantedTypes.has(notification.notification_type)) {
+          await markRead(notification.id);
+          continue;
+        }
         if (state.isHandled(notification.id)) {
           await markRead(notification.id);
           continue;
@@ -169,7 +179,7 @@ async function main(): Promise<void> {
     // below rather than swallowed. The time cutoff also covers the window in
     // which `taskshoot listen` was still connecting — a mention created then
     // is not in queuedIds, but it is not backlog either.
-    const backlogCutoff = new Date(Date.now() - 60_000).toISOString();
+    const backlogCutoff = new Date(bootedAt - 60_000).toISOString();
     const seeded: string[] = [];
     for (;;) {
       const items = await listUnreadNotifications();
@@ -200,13 +210,20 @@ async function main(): Promise<void> {
     console.log(`first run: marked ${seeded.length} pre-existing notifications read and seeded the ledger`);
   }
 
+  // One immediate sweep BEFORE draining starts: after downtime it collects
+  // what arrived while the daemon was down; after first-run seeding it
+  // collects the unread rows the backlog cutoff deliberately left for it.
+  // Draining only starts once this poll has merged its (older) rows into the
+  // queue — otherwise a WS-delivered newer mention on the same task would be
+  // handled first and resume the session out of thread order.
+  await poll();
+  // The WS listener may have queued newer mentions before the poll appended
+  // older ones; one sort puts the whole startup backlog in thread order
+  // before the first handle runs.
+  queue.sort((a, b) => a.created_at.localeCompare(b.created_at));
   drainingEnabled = true;
   void drain();
   setInterval(poll, config.pollMinutes * 60 * 1000);
-  // One immediate sweep: after downtime it answers what arrived while the
-  // daemon was down; after first-run seeding it answers the unread rows the
-  // backlog cutoff deliberately left for it.
-  await poll();
 }
 
 main().catch((error) => {
