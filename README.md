@@ -46,7 +46,8 @@ Claude Agent SDK run ──> taskshoot task comment <ref> "..."
 ## Installing
 
 ```bash
-pnpm add -g github:cyberneura/taskshoot-socket-agent
+pnpm add -g --allow-build=taskshoot-socket-agent \
+  github:cyberneura/taskshoot-socket-agent
 taskshoot-socket-agent --version
 ```
 
@@ -54,9 +55,14 @@ The install compiles the TypeScript itself, so no checkout is needed. The
 daemon takes no arguments and runs in the foreground until stopped; `--help`
 lists the environment variables.
 
-`npm install -g <git url>` does not work here: npm omits devDependencies for
-global git installs, so the compile step has no compiler. Use pnpm, or
-install from a source checkout.
+Two install caveats, both from the compile step:
+
+- `--allow-build` is what lets that compile run. Current pnpm refuses build
+  scripts in git-hosted packages unless the package is allowlisted (verified
+  on 10.29; 10.17 still installed without the flag).
+- `npm install -g <git url>` cannot work at all: npm omits devDependencies
+  for global git installs, so there is no compiler to run. Use pnpm, or
+  install from a source checkout.
 
 ## Running from a source checkout
 
