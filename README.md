@@ -89,8 +89,11 @@ templates:
 
 ## Security model — read before deploying
 
-The daemon runs the agent unattended: `bypassPermissions` plus a PreToolUse
-allow hook, because there is no human at the prompt to approve tools.
+The daemon runs the agent unattended with `bypassPermissions`, because there
+is no human at the prompt to approve tools. There is deliberately no blanket
+PreToolUse allow hook: a hook's "allow" skips the normal permission
+evaluation — deny rules included — whereas `bypassPermissions` on its own
+still honors them.
 **Bypassing permissions does not protect against prompt injection**: anyone
 who can write into a task thread the bot reads can try to steer the agent.
 The system-prompt policy ("no real work, no secrets") is guidance the model

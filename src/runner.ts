@@ -3,8 +3,11 @@
  *
  * The daemon runs unattended on a host the operator has dedicated to the bot,
  * so tool approvals cannot be interactive (there is no human at the prompt):
- * permissionMode bypass, plus a PreToolUse hook as a belt-and-braces answer
- * for any approval prompt that still surfaces while running unattended.
+ * permissionMode bypassPermissions. Deliberately NO PreToolUse allow hook —
+ * a hook's "allow" decision skips the normal permission evaluation entirely,
+ * including the host's deny rules, whereas bypassPermissions on its own
+ * still honors them. The deny rules are this daemon's enforcement layer, so
+ * a blanket hook would defeat it.
  *
  * SECURITY: bypassing permissions means a prompt injection in a task thread
  * can steer the agent. The system-prompt policy is guidance, not enforcement;
@@ -12,21 +15,9 @@
  * project / local settings are loaded) and host isolation. See the README
  * before deploying this anywhere.
  */
-import {
-  query as claudeQuery,
-  type HookCallback,
-} from "@anthropic-ai/claude-agent-sdk";
+import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk";
 
 import { config } from "./config.js";
-
-const approveUnattendedToolUse: HookCallback = async () => ({
-  hookSpecificOutput: {
-    hookEventName: "PreToolUse",
-    permissionDecision: "allow",
-    permissionDecisionReason:
-      "taskshoot-socket-agent runs unattended; tool policy is enforced by host settings.",
-  },
-});
 
 export interface AgentRunResult {
   result: string;
@@ -64,7 +55,6 @@ export async function runAgent(
         // operator most likely put their deny rules, and those are part of
         // the enforcement layer here.
         settingSources: ["user", "project", "local"],
-        hooks: { PreToolUse: [{ hooks: [approveUnattendedToolUse] }] },
         abortController,
         ...(options.resumeSessionId ? { resume: options.resumeSessionId } : {}),
         systemPrompt: {

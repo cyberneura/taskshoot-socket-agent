@@ -60,11 +60,12 @@ export async function listUnreadNotifications(): Promise<Notification[]> {
   return items;
 }
 
-/** Mark every unread notification read (first-run seeding). Unlike the
- * per-notification variant this throws on failure: seeding must not half
- * succeed, or the unmarked backlog gets answered later. */
-export async function markAllRead(): Promise<void> {
-  await execFileAsync(config.taskshootBin, ["notifications", "read", "--all"]);
+/** Mark specific notifications read (first-run seeding). Unlike the
+ * per-notification variant this throws on failure: seeding relies on the
+ * read flag to keep the pre-existing backlog out of future polls. */
+export async function markReadIds(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await execFileAsync(config.taskshootBin, ["notifications", "read", ...ids]);
 }
 
 /** Mark a notification read. Failures are logged, not thrown: the handled-id

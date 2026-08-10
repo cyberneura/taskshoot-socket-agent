@@ -18,8 +18,8 @@ import { runAgent, type RunError } from "./runner.js";
 import { State } from "./state.js";
 import {
   listUnreadNotifications,
-  markAllRead,
   markRead,
+  markReadIds,
   whoAmI,
   type Notification,
 } from "./taskshoot.js";
@@ -136,25 +136,40 @@ async function main(): Promise<void> {
   if (state.isFirstRun) {
     // Very first run on this host: the unread backlog predates the daemon.
     // Answering weeks-old mentions in bulk would be noise (and the requesters
-    // have long moved on), so seed the ledger and mark the whole backlog
-    // read, and only respond to mentions from now on. Marking read matters
-    // beyond tidiness: the list is capped at 100, so pre-existing unread
-    // rows beyond the cap would otherwise surface in later polls (and get
-    // answered) as the newer rows drain — and unread rows of unsubscribed
-    // types would crowd mentions out of the backstop's window. Nothing else
-    // consumes a bot's notification inbox.
-    const items = await listUnreadNotifications();
-    for (const notification of items) {
-      // Queued = the WS (already listening) delivered it while we were
-      // seeding, so it is new work, not backlog. markAllRead below still
-      // marks it read, which is fine: it is in the in-process queue.
-      if (!queuedIds.has(notification.id)) state.markHandled(notification.id);
+    // have long moved on), so mark the backlog read and seed the ledger, and
+    // only respond to mentions from now on. Marking read matters beyond
+    // tidiness: the list is capped at 100, so pre-existing unread rows beyond
+    // the cap would otherwise surface in later polls (and get answered) as
+    // the newer rows drain — and unread rows of unsubscribed types would
+    // crowd mentions out of the backstop's window. Nothing else consumes a
+    // bot's notification inbox.
+    //
+    // Ordering, for crash safety: batches are marked READ first (a crash then
+    // leaves them read = swallowed backlog, the intended outcome, and the
+    // state file does not exist yet so the restart seeds again), and the
+    // ledger + state file are only written after every batch is read (a
+    // crash mid-ledger leaves a partially handled but fully read backlog,
+    // which the poll can no longer see). Writing the state file first would
+    // be the dangerous order: a restart would skip seeding and answer the
+    // rest of the backlog.
+    //
+    // Notifications the WS (already listening) delivered while we seed are
+    // in queuedIds: they are new work, not backlog — never mark them read
+    // or handled here; a crash before their run completes must leave them
+    // recoverable by the backstop.
+    const seeded: string[] = [];
+    for (;;) {
+      const items = await listUnreadNotifications();
+      const backlog = items.filter((n) => !queuedIds.has(n.id));
+      if (backlog.length === 0) break;
+      await markReadIds(backlog.map((n) => n.id));
+      seeded.push(...backlog.map((n) => n.id));
     }
-    await markAllRead();
+    for (const id of seeded) state.markHandled(id);
     // Persist even when the backlog was empty: the state file's existence is
     // what marks first-run seeding as done.
     state.persist();
-    console.log(`first run: seeded the ledger with ${items.length} pre-existing notifications`);
+    console.log(`first run: marked ${seeded.length} pre-existing notifications read and seeded the ledger`);
   }
 
   setInterval(poll, config.pollMinutes * 60 * 1000);
