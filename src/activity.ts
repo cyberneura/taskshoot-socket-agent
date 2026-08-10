@@ -37,6 +37,27 @@ let activeOps = 0;
 // TTL is only 90 seconds — the indicator would expire mid-run.
 const opWaiters: Array<() => void> = [];
 const urgentOpWaiters: Array<() => void> = [];
+// Bounded fairness, not strict urgent-first: enough already-shown tasks can
+// generate refreshes faster than the slots drain them (≈100 tasks × one
+// refresh per 30s vs 4 slots), and a strict priority would then starve the
+// remaining initial sets for as long as the agent queue takes. Capping the
+// urgent streak reserves ≥1 grant in (limit+1) for initial sets; a refresh
+// delayed by that detour stays well inside the 90s TTL.
+const URGENT_STREAK_LIMIT = 3;
+let urgentStreak = 0;
+
+function wakeNextWaiter(): void {
+  if (
+    urgentOpWaiters.length > 0 &&
+    (urgentStreak < URGENT_STREAK_LIMIT || opWaiters.length === 0)
+  ) {
+    urgentStreak += 1;
+    urgentOpWaiters.shift()?.();
+  } else if (opWaiters.length > 0) {
+    urgentStreak = 0;
+    opWaiters.shift()?.();
+  }
+}
 
 async function withOpSlot(op: () => Promise<void>, urgent: boolean): Promise<void> {
   // while, not if: a caller arriving between a slot release and the woken
@@ -51,7 +72,7 @@ async function withOpSlot(op: () => Promise<void>, urgent: boolean): Promise<voi
     await op();
   } finally {
     activeOps -= 1;
-    (urgentOpWaiters.shift() ?? opWaiters.shift())?.();
+    wakeNextWaiter();
   }
 }
 
