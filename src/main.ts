@@ -103,14 +103,26 @@ async function main(): Promise<void> {
     // Show "thinking…" on the thread while the agent works, and keep it
     // alive across the (minutes-long) run. Cleared in the finally: posting a
     // reply clears it server-side, but a NO_REPLY or failed run posts
-    // nothing, and an explicit clear also converges the race where a slow
-    // refresh lands after the reply (the CLAUDE.md activity notes' pattern).
+    // nothing. All activity calls are chained onto one promise so the final
+    // clear runs strictly after any in-flight refresh — an overtaken refresh
+    // would otherwise recreate the indicator for a full TTL after the run
+    // ended (the same race the web frontend serializes per task).
     const activityArgs = cliTaskArgs(notification);
     let activityTimer: NodeJS.Timeout | undefined;
+    let activityChain: Promise<void> = Promise.resolve();
+    const chainActivity = (op: () => Promise<void>): Promise<void> => {
+      activityChain = activityChain.then(op, op);
+      return activityChain;
+    };
     if (activityArgs) {
-      await setActivity(activityArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS);
+      await chainActivity(() =>
+        setActivity(activityArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS),
+      );
       activityTimer = setInterval(
-        () => void setActivity(activityArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS),
+        () =>
+          void chainActivity(() =>
+            setActivity(activityArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS),
+          ),
         ACTIVITY_REFRESH_MS,
       );
     }
@@ -142,7 +154,8 @@ async function main(): Promise<void> {
       console.error(`agent run failed for ${notification.id}; the backstop will retry:`, error);
     } finally {
       if (activityTimer) clearInterval(activityTimer);
-      if (activityArgs) await clearActivity(activityArgs);
+      // Chained: waits for any refresh still in flight before clearing.
+      if (activityArgs) await chainActivity(() => clearActivity(activityArgs));
     }
   };
 
