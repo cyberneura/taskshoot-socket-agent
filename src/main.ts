@@ -10,6 +10,7 @@
  * re-reads unread notifications on an interval; both paths converge on the
  * same handled-id ledger, which is what prevents double replies.
  */
+import { ActivityIndicator } from "./activity.js";
 import { config } from "./config.js";
 import { startListener } from "./listen.js";
 import { acquireSingleInstanceLock } from "./lock.js";
@@ -17,26 +18,13 @@ import { buildMentionPrompt, buildSystemPromptAppend, cliTaskRef } from "./promp
 import { runAgent, type RunError } from "./runner.js";
 import { State } from "./state.js";
 import {
-  clearActivity,
   cliTaskArgs,
   listUnreadNotifications,
   markRead,
   markReadIds,
-  setActivity,
   whoAmI,
   type Notification,
 } from "./taskshoot.js";
-
-/** The "thinking" indicator shown on the thread while a mention is being
- * answered. Refreshed while the run is alive; the TTL bounds how long a stale
- * indicator survives a crash. Refresh well inside the TTL so one missed
- * refresh does not blink the indicator off. */
-const ACTIVITY_TEXT = {
-  en: "Thinking about a reply to the mention…",
-  ja: "メンションの回答を考えています…",
-};
-const ACTIVITY_TTL_SECONDS = 90;
-const ACTIVITY_REFRESH_MS = 30_000;
 
 async function main(): Promise<void> {
   // Captured before any startup work: whoAmI() can retry for minutes, and the
@@ -56,6 +44,15 @@ async function main(): Promise<void> {
   // burst of mentions is better served slightly late than twice.
   const queue: Notification[] = [];
   const queuedIds = new Set<string>();
+  // The "thinking…" indicator starts the moment a mention is enqueued (not
+  // when its serial turn comes up) and clears when its run finished. Each
+  // queued mention holds one refcount on its task's indicator; the release
+  // is looked up by notification id at dequeue time.
+  const activity = new ActivityIndicator();
+  const activityHolds = new Map<
+    string,
+    { ready: Promise<void>; release: () => Promise<void> }
+  >();
   let working = false;
   // Draining stays off until first-run seeding has finished: a handle() that
   // completes mid-seed would write state.json early (a crash then makes the
@@ -69,6 +66,15 @@ async function main(): Promise<void> {
     if (state.isHandled(notification.id) || queuedIds.has(notification.id)) return;
     queuedIds.add(notification.id);
     queue.push(notification);
+    const taskArgs = cliTaskArgs(notification);
+    if (notification.task && taskArgs) {
+      // Keyed by the stable task id: the CLI args for the same task can
+      // change between mentions (untracked task gaining a ref).
+      activityHolds.set(
+        notification.id,
+        activity.acquire(notification.task.id, taskArgs),
+      );
+    }
     console.log(`[${source}] queued ${notification.id} (${notification.title})`);
     if (drainingEnabled) void drain();
   };
@@ -82,10 +88,21 @@ async function main(): Promise<void> {
         // until the run finished: an agent run takes minutes, and a poll (or
         // the WS catch-up) firing mid-run must not re-enqueue the mention we
         // are answering right now — that was a real double-reply path.
+        const hold = activityHolds.get(next.id);
         if (!state.isHandled(next.id)) {
+          // The initial set must land before the run: a fast reply posted
+          // ahead of it would have nothing to clear server-side, and the
+          // late set would show "thinking" after the answer.
+          if (hold) await hold.ready;
           await handle(next);
         }
         queuedIds.delete(next.id);
+        // Released after the run (posting the reply already cleared the
+        // indicator server-side, but a NO_REPLY or failed run posts
+        // nothing) — and also for skipped duplicates, or the refcount leaks
+        // and the indicator never clears.
+        activityHolds.delete(next.id);
+        if (hold) await hold.release();
       }
     } finally {
       working = false;
@@ -100,40 +117,6 @@ async function main(): Promise<void> {
       `handling ${notification.id} on ${cliTaskRef(notification) ?? "(no task)"}` +
         (resumeSessionId ? ` (resuming session ${resumeSessionId})` : ""),
     );
-    // Show "thinking…" on the thread while the agent works, and keep it
-    // alive across the (minutes-long) run. Cleared in the finally: posting a
-    // reply clears it server-side, but a NO_REPLY or failed run posts
-    // nothing. All activity calls are chained onto one promise so the final
-    // clear runs strictly after any in-flight refresh — an overtaken refresh
-    // would otherwise recreate the indicator for a full TTL after the run
-    // ended (the same race the web frontend serializes per task).
-    const activityArgs = cliTaskArgs(notification);
-    let activityTimer: NodeJS.Timeout | undefined;
-    let activityChain: Promise<void> = Promise.resolve();
-    let queuedActivityOps = 0;
-    const chainActivity = (op: () => Promise<void>): Promise<void> => {
-      queuedActivityOps += 1;
-      activityChain = activityChain.then(op, op).finally(() => {
-        queuedActivityOps -= 1;
-      });
-      return activityChain;
-    };
-    if (activityArgs) {
-      await chainActivity(() =>
-        setActivity(activityArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS),
-      );
-      activityTimer = setInterval(() => {
-        // Coalesce: a refresh slower than the interval must not queue ticks
-        // behind itself — the backlog would outlive the run and delay the
-        // final clear (and every later mention in this serial queue). A
-        // skipped tick costs nothing: the TTL is three intervals long.
-        if (queuedActivityOps === 0) {
-          void chainActivity(() =>
-            setActivity(activityArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS),
-          );
-        }
-      }, ACTIVITY_REFRESH_MS);
-    }
     try {
       let run;
       try {
@@ -160,10 +143,6 @@ async function main(): Promise<void> {
       await markRead(notification.id);
     } catch (error) {
       console.error(`agent run failed for ${notification.id}; the backstop will retry:`, error);
-    } finally {
-      if (activityTimer) clearInterval(activityTimer);
-      // Chained: waits for any refresh still in flight before clearing.
-      if (activityArgs) await chainActivity(() => clearActivity(activityArgs));
     }
   };
 

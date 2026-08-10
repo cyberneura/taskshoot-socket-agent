@@ -19,9 +19,11 @@ Claude Agent SDK run ──> taskshoot task comment <ref> "..."
 ## What it does — and does not — do
 
 - **Conversation and investigation only.** The agent answers questions, reads
-  code/logs on its host and replies in the thread. While it works, the thread
-  shows a transient "Thinking about a reply to the mention…" activity
-  indicator (`taskshoot task activity`, CLI 0.8.0+; skipped on older CLIs).
+  code/logs on its host and replies in the thread. While a task has mentions
+  queued or being answered — from the moment a mention is received until its
+  run finished — the thread shows a transient "Thinking about a reply… /
+  回答を考えています…" activity indicator (`taskshoot task activity`,
+  CLI 0.8.0+; skipped on older CLIs).
 - **It never starts real work.** Code changes, PRs and merges are gated by the
   task's *Bot Ready* flag and executed by a separate agent loop (see the
   `taskshoot-agent-loop` skill in taskshoot-cli). When a mention asks for
