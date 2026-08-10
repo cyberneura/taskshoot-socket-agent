@@ -31,20 +31,27 @@ const ACTIVITY_REFRESH_MS = 30_000;
  * all fan out at once, starving the process/API capacity the agent needs. */
 const MAX_CONCURRENT_OPS = 4;
 let activeOps = 0;
+// Two tiers: refreshes and clears of already-shown indicators jump ahead of
+// backlog initial sets. Behind ~100 queued sets each taking up to the 15s
+// exec timeout, a refresh would otherwise wait minutes while the server-side
+// TTL is only 90 seconds — the indicator would expire mid-run.
 const opWaiters: Array<() => void> = [];
+const urgentOpWaiters: Array<() => void> = [];
 
-async function withOpSlot(op: () => Promise<void>): Promise<void> {
+async function withOpSlot(op: () => Promise<void>, urgent: boolean): Promise<void> {
   // while, not if: a caller arriving between a slot release and the woken
   // waiter actually running can take the slot first.
   while (activeOps >= MAX_CONCURRENT_OPS) {
-    await new Promise<void>((resolve) => opWaiters.push(resolve));
+    await new Promise<void>((resolve) =>
+      (urgent ? urgentOpWaiters : opWaiters).push(resolve),
+    );
   }
   activeOps += 1;
   try {
     await op();
   } finally {
     activeOps -= 1;
-    opWaiters.shift()?.();
+    (urgentOpWaiters.shift() ?? opWaiters.shift())?.();
   }
 }
 
@@ -62,14 +69,20 @@ export class ActivityIndicator {
   // mentioned over the process lifetime.
   private readonly entries = new Map<string, Entry>();
 
-  /** Start (or join) the indicator for a task. `ready` settles once the
+  /** Start (or join) the indicator for a task. `key` must be the stable
+   * task id, NOT derived from `taskArgs`: an untracked task can become
+   * tracked between two mentions, changing its CLI arguments — an
+   * args-based key would split one server-side task across two entries
+   * whose refcounts and chains race each other. `ready` settles once the
    * initial set (or whatever was in flight at acquire time) has landed —
    * await it before running the agent, or a fast reply could be posted
    * before the set and the late set would show "thinking" after the answer.
    * Call `release` once when this mention is done; the indicator clears
    * when the last holder releases. */
-  acquire(taskArgs: string[]): { ready: Promise<void>; release: () => Promise<void> } {
-    const key = taskArgs.join("\u0000");
+  acquire(
+    key: string,
+    taskArgs: string[],
+  ): { ready: Promise<void>; release: () => Promise<void> } {
     let entry = this.entries.get(key);
     if (!entry) {
       entry = { count: 0, chain: Promise.resolve(), queuedOps: 0 };
@@ -79,7 +92,11 @@ export class ActivityIndicator {
     held.count += 1;
     let ready = held.chain;
     if (held.count === 1) {
-      ready = this.chainOp(held, () =>
+      // The initial set is the only non-urgent op: nothing is on screen
+      // yet, so it may wait behind other tasks' backlog. Refreshes and
+      // clears act on an indicator that is already showing and jump the
+      // global queue — a starved refresh would let the 90s TTL expire.
+      ready = this.chainOp(held, false, () =>
         setActivity(taskArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS),
       );
       held.timer = setInterval(() => {
@@ -88,7 +105,7 @@ export class ActivityIndicator {
         // final clear. A skipped tick costs nothing: the TTL is three
         // intervals long.
         if (held.queuedOps === 0) {
-          void this.chainOp(held, () =>
+          void this.chainOp(held, true, () =>
             setActivity(taskArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS),
           );
         }
@@ -103,20 +120,24 @@ export class ActivityIndicator {
         // The server clears the indicator when this mention's reply is
         // posted, but siblings are still queued or running — re-set it now
         // rather than leaving a gap until the next refresh tick.
-        return this.chainOp(held, () =>
+        return this.chainOp(held, true, () =>
           setActivity(taskArgs, ACTIVITY_TEXT, ACTIVITY_TTL_SECONDS),
         );
       }
       if (held.timer) clearInterval(held.timer);
       held.timer = undefined;
-      return this.chainOp(held, () => clearActivity(taskArgs));
+      return this.chainOp(held, true, () => clearActivity(taskArgs));
     };
     return { ready, release };
   }
 
-  private chainOp(entry: Entry, op: () => Promise<void>): Promise<void> {
+  private chainOp(
+    entry: Entry,
+    urgent: boolean,
+    op: () => Promise<void>,
+  ): Promise<void> {
     entry.queuedOps += 1;
-    const run = () => withOpSlot(op);
+    const run = () => withOpSlot(op, urgent);
     entry.chain = entry.chain.then(run, run).finally(() => {
       entry.queuedOps -= 1;
     });

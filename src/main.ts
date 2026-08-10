@@ -67,7 +67,14 @@ async function main(): Promise<void> {
     queuedIds.add(notification.id);
     queue.push(notification);
     const taskArgs = cliTaskArgs(notification);
-    if (taskArgs) activityHolds.set(notification.id, activity.acquire(taskArgs));
+    if (notification.task && taskArgs) {
+      // Keyed by the stable task id: the CLI args for the same task can
+      // change between mentions (untracked task gaining a ref).
+      activityHolds.set(
+        notification.id,
+        activity.acquire(notification.task.id, taskArgs),
+      );
+    }
     console.log(`[${source}] queued ${notification.id} (${notification.title})`);
     if (drainingEnabled) void drain();
   };
