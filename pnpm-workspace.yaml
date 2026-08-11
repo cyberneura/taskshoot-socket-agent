@@ -1,0 +1,9 @@
+# esbuild (tsx の依存) の postinstall を許可する。
+# pnpm 11 は未承認のビルドスクリプトがあると ERR_PNPM_IGNORED_BUILDS で
+# **install 自体を失敗させる** (pnpm 10 は警告のみ)。bin/start.sh は
+# `set -e` の下で `pnpm install --frozen-lockfile` を実行するので、
+# 承認が無いと新しいホストでの初回起動がそこで落ちる。
+# キー名は pnpm 11 のもの (`pnpm approve-builds` が書く形式)。
+# onlyBuiltDependencies / ignoredBuiltDependencies はどちらも 11 では効かない。
+allowBuilds:
+  esbuild: true

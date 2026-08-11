@@ -40,6 +40,19 @@ pnpm start        # dist/main.js を起動
   ロックを取るため、インストールの疎通確認ができなくなる)
 - `files` に載っていないものは配布物に入らない。ソース追加時は確認する
 
+## pnpm 11 とビルドスクリプト
+
+`pnpm-workspace.yaml` の `allowBuilds: {esbuild: true}` は消さないこと。
+pnpm 11 は未承認のビルドスクリプトがあると **install を失敗させる**
+(`ERR_PNPM_IGNORED_BUILDS`、pnpm 10 は警告のみ)。`bin/start.sh` は `set -e` の下で
+`pnpm install --frozen-lockfile` を実行するので、承認が無いと新しいホストでの初回起動が
+そこで落ちる (node_modules と dist は作られるので supervisor の再試行では上がるが、
+FATAL に見える起動失敗が毎回 1 回入る)。
+
+キー名は pnpm 11 のもの。**`onlyBuiltDependencies` / `ignoredBuiltDependencies` は
+11 では効かない** (10 向けの書き方。11.21 で実測)。ビルドスクリプトを持つ依存が増えたら
+`pnpm approve-builds --all` を実行してこのファイルを更新する。
+
 ## 構成
 
 - `src/main.ts` — エントリポイント。WS 購読 + ポーリングバックストップ + 直列キュー
