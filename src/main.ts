@@ -90,6 +90,15 @@ async function main(): Promise<void> {
     if (drainingEnabled) void drain();
   };
 
+  // A sweep left answerable rows behind (admission cap). They stay unread, so
+  // the next sweep finds them — but waiting a whole poll interval to start it
+  // would idle the daemon between batches, which is exactly the downtime
+  // recovery this backstop exists for. Cleared by the refill in `drain`.
+  let sweepWasCapped = false;
+  // Sweeps do not overlap: two in flight would list the same rows and race on
+  // the cleanup, and the refill below can start one right after a batch.
+  let sweeping = false;
+
   const drain = async () => {
     if (working) return;
     working = true;
@@ -117,6 +126,16 @@ async function main(): Promise<void> {
       }
     } finally {
       working = false;
+    }
+    // The queue is empty here. If the last sweep was capped, start the next
+    // one now rather than at the next timer tick: a batch of fast NO_REPLY
+    // runs can drain in seconds, and the rows behind it are already known to
+    // exist. Each pass marks its batch handled and read, so this terminates
+    // when the backlog does.
+    if (sweepWasCapped && drainingEnabled) {
+      sweepWasCapped = false;
+      console.log("[poll] the previous sweep was capped; sweeping again for the rest");
+      void poll();
     }
   };
 
@@ -158,6 +177,8 @@ async function main(): Promise<void> {
   };
 
   const poll = async () => {
+    if (sweeping) return;
+    sweeping = true;
     try {
       const items = await listUnreadNotifications();
       // Oldest first, so replies land in thread order.
@@ -191,15 +212,19 @@ async function main(): Promise<void> {
         // The rest stay unread, so the next sweep lists them again. Admitting
         // them all instead would acquire an activity indicator and a refresh
         // timer per task, which src/activity.ts is dimensioned for ~100 of.
+        // `drain` starts that next sweep as soon as this batch is done.
+        sweepWasCapped = true;
         console.error(
           `[poll] ${answerable.length} answerable notifications; queued the oldest ` +
-            `${admitted.length} and left the rest for the next poll`,
+            `${admitted.length} and will sweep again once they are done`,
         );
       }
       // One subprocess per 500 rows rather than per row.
       await markReadIdsBestEffort(cleanup);
     } catch (error) {
       console.error("polling backstop failed:", error);
+    } finally {
+      sweeping = false;
     }
   };
 
