@@ -15,6 +15,7 @@ import { config } from "./config.js";
 import { startListener } from "./listen.js";
 import { acquireSingleInstanceLock } from "./lock.js";
 import { buildMentionPrompt, buildSystemPromptAppend, cliTaskRef } from "./prompt.js";
+import { insertByCreatedAt } from "./queue.js";
 import { runAgent, type RunError } from "./runner.js";
 import { State } from "./state.js";
 import {
@@ -22,9 +23,17 @@ import {
   listUnreadNotifications,
   markRead,
   markReadIds,
+  markReadIdsBestEffort,
   whoAmI,
   type Notification,
 } from "./taskshoot.js";
+
+/** Answerable notifications one poll may queue. Runs are serial, so a sweep
+ * that queued thousands would take days to drain anyway — but it would also
+ * acquire an activity indicator and a 30-second refresh timer per task up
+ * front, and `src/activity.ts` is dimensioned for about 100 of those. The
+ * rest are left unread, so the next sweep finds them again. */
+const MAX_ENQUEUE_PER_POLL = 100;
 
 async function main(): Promise<void> {
   // Captured before any startup work: whoAmI() can retry for minutes, and the
@@ -65,7 +74,9 @@ async function main(): Promise<void> {
     if (!wantedTypes.has(notification.notification_type)) return;
     if (state.isHandled(notification.id) || queuedIds.has(notification.id)) return;
     queuedIds.add(notification.id);
-    queue.push(notification);
+    // Ordered by created_at, not appended: a poll admits a bounded slice per
+    // sweep, so backlog older than a live WebSocket row can arrive after it.
+    insertByCreatedAt(queue, notification);
     const taskArgs = cliTaskArgs(notification);
     if (notification.task && taskArgs) {
       // Keyed by the stable task id: the CLI args for the same task can
@@ -78,6 +89,15 @@ async function main(): Promise<void> {
     console.log(`[${source}] queued ${notification.id} (${notification.title})`);
     if (drainingEnabled) void drain();
   };
+
+  // A sweep left answerable rows behind (admission cap). They stay unread, so
+  // the next sweep finds them — but waiting a whole poll interval to start it
+  // would idle the daemon between batches, which is exactly the downtime
+  // recovery this backstop exists for. Cleared by the refill in `drain`.
+  let sweepWasCapped = false;
+  // Sweeps do not overlap: two in flight would list the same rows and race on
+  // the cleanup, and the refill below can start one right after a batch.
+  let sweeping = false;
 
   const drain = async () => {
     if (working) return;
@@ -106,6 +126,16 @@ async function main(): Promise<void> {
       }
     } finally {
       working = false;
+    }
+    // The queue is empty here. If the last sweep was capped, start the next
+    // one now rather than at the next timer tick: a batch of fast NO_REPLY
+    // runs can drain in seconds, and the rows behind it are already known to
+    // exist. Each pass marks its batch handled and read, so this terminates
+    // when the backlog does.
+    if (sweepWasCapped && drainingEnabled) {
+      sweepWasCapped = false;
+      console.log("[poll] the previous sweep was capped; sweeping again for the rest");
+      void poll();
     }
   };
 
@@ -147,29 +177,54 @@ async function main(): Promise<void> {
   };
 
   const poll = async () => {
+    if (sweeping) return;
+    sweeping = true;
     try {
       const items = await listUnreadNotifications();
       // Oldest first, so replies land in thread order.
       items.sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+      // Rows this daemon will never answer must not stay unread. Leaving them
+      // would make every poll walk more pages, and once their ids age out of
+      // the ledger the handled ones would even be re-answered:
+      // - unsubscribed types (the daemon owns this bot's inbox, nothing else
+      //   reads it),
+      // - handled-but-unread rows (a mark-read that failed earlier).
+      const cleanup: string[] = [];
+      const answerable: Notification[] = [];
       for (const notification of items) {
-        // Rows this daemon will never answer must not stay unread, or they
-        // pile up until they push real mentions past the capped list:
-        // - unsubscribed types (the daemon owns this bot's inbox, nothing
-        //   else reads it),
-        // - handled-but-unread rows (a mark-read that failed earlier; once
-        //   their ids aged out of the ledger they would even be re-answered).
-        if (!wantedTypes.has(notification.notification_type)) {
-          await markRead(notification.id);
-          continue;
+        if (
+          !wantedTypes.has(notification.notification_type) ||
+          state.isHandled(notification.id)
+        ) {
+          cleanup.push(notification.id);
+        } else {
+          answerable.push(notification);
         }
-        if (state.isHandled(notification.id)) {
-          await markRead(notification.id);
-          continue;
-        }
-        enqueue(notification, "poll");
       }
+
+      // Queue the mentions FIRST. The cleanup below is a subprocess call, and
+      // a sweep that finds thousands of stale rows would otherwise hold the
+      // one notification this backstop exists to recover behind all of them.
+      const admitted = answerable.slice(0, MAX_ENQUEUE_PER_POLL);
+      for (const notification of admitted) enqueue(notification, "poll");
+      if (answerable.length > admitted.length) {
+        // The rest stay unread, so the next sweep lists them again. Admitting
+        // them all instead would acquire an activity indicator and a refresh
+        // timer per task, which src/activity.ts is dimensioned for ~100 of.
+        // `drain` starts that next sweep as soon as this batch is done.
+        sweepWasCapped = true;
+        console.error(
+          `[poll] ${answerable.length} answerable notifications; queued the oldest ` +
+            `${admitted.length} and will sweep again once they are done`,
+        );
+      }
+      // One subprocess per 500 rows rather than per row.
+      await markReadIdsBestEffort(cleanup);
     } catch (error) {
       console.error("polling backstop failed:", error);
+    } finally {
+      sweeping = false;
     }
   };
 
@@ -184,12 +239,10 @@ async function main(): Promise<void> {
     // Very first run on this host: the unread backlog predates the daemon.
     // Answering weeks-old mentions in bulk would be noise (and the requesters
     // have long moved on), so mark the backlog read and seed the ledger, and
-    // only respond to mentions from now on. Marking read matters beyond
-    // tidiness: the list is capped at 100, so pre-existing unread rows beyond
-    // the cap would otherwise surface in later polls (and get answered) as
-    // the newer rows drain — and unread rows of unsubscribed types would
-    // crowd mentions out of the backstop's window. Nothing else consumes a
-    // bot's notification inbox.
+    // only respond to mentions from now on. Marking read is what files the
+    // backlog away: the poll walks the unread list with a cursor, so anything
+    // left unread here would be answered on a later sweep. Nothing else
+    // consumes a bot's notification inbox.
     //
     // Ordering, for crash safety: batches are marked READ first (a crash then
     // leaves them read = swallowed backlog, the intended outcome, and the
@@ -217,20 +270,14 @@ async function main(): Promise<void> {
       const backlog = items.filter(
         (n) => !queuedIds.has(n.id) && n.created_at < backlogCutoff,
       );
-      if (backlog.length === 0) {
-        // The list API has no pagination cursor, so a page consisting
-        // entirely of protected rows (queued / newer than the cutoff) would
-        // hide any older backlog behind it — that takes 100+ mentions within
-        // a minute of first boot. It cannot be reached from here; those rows
-        // would surface in later polls and be answered. Say so, loudly.
-        if (items.length >= 100) {
-          console.error(
-            "first run: the unread page is full of new notifications; " +
-              "backlog hidden behind it (if any) will be ANSWERED by later polls",
-          );
-        }
-        break;
-      }
+      // The cursor lifts this from "the newest page" to "the newest 5,000
+      // rows", which is the difference between hiding backlog behind ~100
+      // protected rows (queued or newer than the cutoff) and behind 5,000 of
+      // them. It is not unbounded: listUnreadNotifications logs when it stops
+      // at the page cap, and anything past it stays unread for the next poll
+      // — which would answer it. Reaching that takes 5,000 notifications
+      // within a minute of first boot.
+      if (backlog.length === 0) break;
       await markReadIds(backlog.map((n) => n.id));
       seeded.push(...backlog.map((n) => n.id));
     }
