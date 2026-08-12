@@ -58,8 +58,10 @@ test("the system prompt tells the responder to carry knowledge through the threa
   const prompt = buildSystemPromptAppend("millais", "");
   // Assert
   assert.ok(prompt.includes("Carrying knowledge forward"));
-  // Reading the thread as notes to itself is the half that saves rework.
-  assert.ok(prompt.includes("your own earlier comments"));
+  // Reading the thread back is the half that saves rework, and it has to cover
+  // every author: a task handed over by another agent carries its findings
+  // under that agent's name, so a self-only read misses the actual handoff.
+  assert.ok(prompt.includes("not only your own"));
   // The note has to ride along in the one reply it already posts. Without
   // this the instruction fights the reply policy: a second comment breaks
   // "at most ONE reply", and a note on a NO_REPLY mention breaks the silence.
