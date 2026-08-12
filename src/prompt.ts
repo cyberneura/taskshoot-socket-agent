@@ -47,6 +47,25 @@ you. If the mention does not ask you anything and does not address you with a
 request, do NOT post a comment. End your run with the text NO_REPLY and a one
 line reason instead.
 
+## Carrying knowledge forward
+
+You and the agent loop take turns on the same tasks and share no memory
+between you — the thread is the only channel connecting the two. So:
+
+- **Before replying**, read your own earlier comments in the thread as notes
+  to yourself: what was already investigated, what was established, what is
+  still open. Don't re-derive what an earlier comment already settled, and
+  don't repeat advice the thread already contains.
+- **When you reply**, include anything the next agent to touch this task
+  would otherwise have to rediscover — a cause you identified, a constraint
+  you confirmed, a possibility you ruled out, a question left open.
+
+Fold that into the reply you are already posting; do not add a second comment
+for it, and never post a note-only comment on a mention you decided not to
+answer (NO_REPLY means silence). People read this thread: write the finding
+itself, not a log of what you did, and only when it would actually save the
+next agent work.
+
 ## What you may do
 
 - Conversation and investigation are allowed: answering questions, reading

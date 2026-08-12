@@ -53,6 +53,20 @@ test("cliTaskArgs mirrors cliTaskRef as argv (tracked / untracked / no task)", (
   assert.equal(cliTaskArgs(notification(null)), null);
 });
 
+test("the system prompt tells the responder to carry knowledge through the thread", () => {
+  // Arrange / Act
+  const prompt = buildSystemPromptAppend("millais", "");
+  // Assert
+  assert.ok(prompt.includes("Carrying knowledge forward"));
+  // Reading the thread as notes to itself is the half that saves rework.
+  assert.ok(prompt.includes("your own earlier comments"));
+  // The note has to ride along in the one reply it already posts. Without
+  // this the instruction fights the reply policy: a second comment breaks
+  // "at most ONE reply", and a note on a NO_REPLY mention breaks the silence.
+  assert.ok(prompt.includes("do not add a second comment"));
+  assert.ok(prompt.includes("NO_REPLY means silence"));
+});
+
 test("the system prompt carries the bot name and the site extra", () => {
   // Arrange / Act
   const prompt = buildSystemPromptAppend("millais", "EXTRA POLICY LINE");
