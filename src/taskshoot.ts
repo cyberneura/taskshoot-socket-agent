@@ -41,30 +41,111 @@ export async function whoAmI(): Promise<{ id: string; display_name: string }> {
   return runJson(["me"]);
 }
 
+/** One page of `notifications list`; the server caps a page at this. */
+const NOTIFICATION_PAGE_SIZE = 100;
+
+/** Pages to walk in one call (= 5,000 rows). A backlog that deep means
+ * something is wrong upstream, and walking it forever would keep the poll —
+ * and the mentions behind it — waiting. Reaching this is logged. */
+const MAX_NOTIFICATION_PAGES = 50;
+
+/** Whether the installed CLI knows `notifications list --before` (added
+ * alongside `--types`; CYBERNEURA-DEV-402). Cached like `activityAvailable`:
+ * on an older CLI this degrades to the single newest page rather than
+ * failing every poll. */
+let cursorCheck: Promise<boolean> | null = null;
+
+function cursorAvailable(): Promise<boolean> {
+  cursorCheck ??= (async () => {
+    try {
+      const { stdout } = await execFileAsync(config.taskshootBin, [
+        "notifications",
+        "list",
+        "--help",
+      ]);
+      if (stdout.includes("--before")) return true;
+    } catch {
+      // fall through to the warning: an unusable --help means an unusable flag
+    }
+    console.error(
+      "[poll] `taskshoot notifications list --before` is unavailable (older CLI); " +
+        "only the newest 100 unread notifications are reachable",
+    );
+    return false;
+  })();
+  return cursorCheck;
+}
+
 /**
- * Known limitation: the CLI offers neither a server-side type filter nor a
- * pagination cursor for this list, so only the newest 100 unread rows are
- * reachable. Consequences, all bounded by the same missing cursor:
- * - 100+ unread rows of unsubscribed types could push mentions out of the
- *   window (mitigated by the caller's mark-read cleanup);
- * - during a first-run seed, backlog hidden behind a full page of protected
- *   rows cannot be reached (requires 100+ mentions within a minute of first
- *   boot — logged when detected);
- * - after long downtime with 100+ unread mentions, older hidden rows are
- *   only reached on later polls, so cross-poll ordering is not guaranteed.
- * Adding `--types` and a `--before <id>` cursor to `taskshoot notifications
- * list` would remove all three for good.
+ * Unread notifications, newest first, up to `MAX_NOTIFICATION_PAGES` pages.
+ *
+ * The cursor is what widens this past one page: a page holds at most 100, so
+ * without it the newest 100 rows were all a poll could see, and unread rows
+ * of types this daemon does not answer could push real mentions out of that
+ * window. `--before <id>` walks the pages behind it (CYBERNEURA-DEV-402).
+ *
+ * **Still bounded, just far higher.** Hitting the page cap is logged rather
+ * than reported to the caller: the rows beyond it stay unread, so the next
+ * poll starts on them once these are marked read. Callers must not read
+ * "no more rows here" as "no more rows anywhere".
+ *
+ * Deliberately **not** filtered with `--types`: the caller marks unwanted
+ * types read (nothing else consumes a bot's inbox), which needs them listed.
  */
 export async function listUnreadNotifications(): Promise<Notification[]> {
-  const { items } = await runJson<{ items: Notification[] }>([
-    "notifications",
-    "list",
-    "--unread-only",
-    "--limit",
-    "100",
-  ]);
-  return items;
+  return collectUnreadPages(
+    (before) => {
+      const args = [
+        "notifications",
+        "list",
+        "--unread-only",
+        "--limit",
+        String(NOTIFICATION_PAGE_SIZE),
+      ];
+      if (before) args.push("--before", before);
+      return runJson<{ items: Notification[] }>(args).then((r) => r.items);
+    },
+    cursorAvailable,
+  );
 }
+
+/** The paging loop, with the subprocess handed in so it can be tested.
+ * `hasCursor` is only consulted when a second page is actually needed. */
+export async function collectUnreadPages(
+  fetchPage: (before?: string) => Promise<Notification[]>,
+  hasCursor: () => Promise<boolean>,
+): Promise<Notification[]> {
+  const all = [...(await fetchPage())];
+  if (all.length < NOTIFICATION_PAGE_SIZE) return all;
+  if (!(await hasCursor())) return all;
+
+  // A full page always has a last row, but the index signature does not say
+  // so; treating a missing one as the end keeps the loop from spinning on a
+  // cursor it cannot advance.
+  const cursorOf = (items: Notification[]) => items[items.length - 1]?.id;
+
+  let before = cursorOf(all);
+  for (let pageNumber = 1; before && pageNumber < MAX_NOTIFICATION_PAGES; pageNumber++) {
+    const items = await fetchPage(before);
+    all.push(...items);
+    // A short page is the end of the backlog. Stopping on `length === 0`
+    // instead would cost one extra request per poll for no new rows.
+    if (items.length < NOTIFICATION_PAGE_SIZE) return all;
+    before = cursorOf(items);
+  }
+  if (!before) return all;
+  // "may remain": a backlog that ends exactly on the cap is indistinguishable
+  // from one that continues without spending another request to find out.
+  console.error(
+    `[poll] stopped after ${MAX_NOTIFICATION_PAGES} pages (${all.length} unread); ` +
+      "older notifications may remain and are left for the next poll",
+  );
+  return all;
+}
+
+/** Exported for tests: the page size the loop treats as "a full page". */
+export const NOTIFICATION_PAGE_SIZE_FOR_TESTS = NOTIFICATION_PAGE_SIZE;
+export const MAX_NOTIFICATION_PAGES_FOR_TESTS = MAX_NOTIFICATION_PAGES;
 
 /** Mark specific notifications read (first-run seeding). Unlike the
  * per-notification variant this throws on failure: seeding relies on the

@@ -152,8 +152,9 @@ async function main(): Promise<void> {
       // Oldest first, so replies land in thread order.
       items.sort((a, b) => a.created_at.localeCompare(b.created_at));
       for (const notification of items) {
-        // Rows this daemon will never answer must not stay unread, or they
-        // pile up until they push real mentions past the capped list:
+        // Rows this daemon will never answer must not stay unread. The list
+        // is paginated now, so they no longer hide mentions from the poll,
+        // but leaving them would make every poll walk more pages:
         // - unsubscribed types (the daemon owns this bot's inbox, nothing
         //   else reads it),
         // - handled-but-unread rows (a mark-read that failed earlier; once
@@ -184,12 +185,10 @@ async function main(): Promise<void> {
     // Very first run on this host: the unread backlog predates the daemon.
     // Answering weeks-old mentions in bulk would be noise (and the requesters
     // have long moved on), so mark the backlog read and seed the ledger, and
-    // only respond to mentions from now on. Marking read matters beyond
-    // tidiness: the list is capped at 100, so pre-existing unread rows beyond
-    // the cap would otherwise surface in later polls (and get answered) as
-    // the newer rows drain — and unread rows of unsubscribed types would
-    // crowd mentions out of the backstop's window. Nothing else consumes a
-    // bot's notification inbox.
+    // only respond to mentions from now on. Marking read is what files the
+    // backlog away: the poll walks the unread list with a cursor, so anything
+    // left unread here would be answered on a later sweep. Nothing else
+    // consumes a bot's notification inbox.
     //
     // Ordering, for crash safety: batches are marked READ first (a crash then
     // leaves them read = swallowed backlog, the intended outcome, and the
@@ -217,20 +216,14 @@ async function main(): Promise<void> {
       const backlog = items.filter(
         (n) => !queuedIds.has(n.id) && n.created_at < backlogCutoff,
       );
-      if (backlog.length === 0) {
-        // The list API has no pagination cursor, so a page consisting
-        // entirely of protected rows (queued / newer than the cutoff) would
-        // hide any older backlog behind it — that takes 100+ mentions within
-        // a minute of first boot. It cannot be reached from here; those rows
-        // would surface in later polls and be answered. Say so, loudly.
-        if (items.length >= 100) {
-          console.error(
-            "first run: the unread page is full of new notifications; " +
-              "backlog hidden behind it (if any) will be ANSWERED by later polls",
-          );
-        }
-        break;
-      }
+      // The cursor lifts this from "the newest page" to "the newest 5,000
+      // rows", which is the difference between hiding backlog behind ~100
+      // protected rows (queued or newer than the cutoff) and behind 5,000 of
+      // them. It is not unbounded: listUnreadNotifications logs when it stops
+      // at the page cap, and anything past it stays unread for the next poll
+      // — which would answer it. Reaching that takes 5,000 notifications
+      // within a minute of first boot.
+      if (backlog.length === 0) break;
       await markReadIds(backlog.map((n) => n.id));
       seeded.push(...backlog.map((n) => n.id));
     }
