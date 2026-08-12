@@ -240,6 +240,29 @@ export async function clearActivity(taskArgs: string[]): Promise<void> {
  * ledger is what prevents double replies, and a mention must not be retried
  * (and answered twice) because mark-read hiccuped. Rows left unread by a
  * failure here are retried by the polling sweep. */
+/** Ids per `notifications read` call. One call for thousands of ids would
+ * build an argv megabytes long; chunking keeps it far below any limit while
+ * still replacing a subprocess per row with one per 500. */
+const MARK_READ_CHUNK = 500;
+
+/** Mark many notifications read, best effort. Cleanup rows are not worth
+ * failing a poll over: an id that stays unread is simply listed again next
+ * time. (`markReadIds` throws instead, because seeding relies on the read
+ * flag to keep the pre-existing backlog out of future polls.) */
+export async function markReadIdsBestEffort(ids: string[]): Promise<void> {
+  for (let i = 0; i < ids.length; i += MARK_READ_CHUNK) {
+    const chunk = ids.slice(i, i + MARK_READ_CHUNK);
+    try {
+      await execFileAsync(config.taskshootBin, ["notifications", "read", ...chunk]);
+    } catch (error) {
+      console.error(
+        `[taskshoot-socket-agent] failed to mark ${chunk.length} notifications read:`,
+        error,
+      );
+    }
+  }
+}
+
 export async function markRead(notificationId: string): Promise<void> {
   try {
     await execFileAsync(config.taskshootBin, ["notifications", "read", notificationId]);

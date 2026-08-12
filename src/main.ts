@@ -22,9 +22,17 @@ import {
   listUnreadNotifications,
   markRead,
   markReadIds,
+  markReadIdsBestEffort,
   whoAmI,
   type Notification,
 } from "./taskshoot.js";
+
+/** Answerable notifications one poll may queue. Runs are serial, so a sweep
+ * that queued thousands would take days to drain anyway — but it would also
+ * acquire an activity indicator and a 30-second refresh timer per task up
+ * front, and `src/activity.ts` is dimensioned for about 100 of those. The
+ * rest are left unread, so the next sweep finds them again. */
+const MAX_ENQUEUE_PER_POLL = 100;
 
 async function main(): Promise<void> {
   // Captured before any startup work: whoAmI() can retry for minutes, and the
@@ -151,24 +159,42 @@ async function main(): Promise<void> {
       const items = await listUnreadNotifications();
       // Oldest first, so replies land in thread order.
       items.sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+      // Rows this daemon will never answer must not stay unread. Leaving them
+      // would make every poll walk more pages, and once their ids age out of
+      // the ledger the handled ones would even be re-answered:
+      // - unsubscribed types (the daemon owns this bot's inbox, nothing else
+      //   reads it),
+      // - handled-but-unread rows (a mark-read that failed earlier).
+      const cleanup: string[] = [];
+      const answerable: Notification[] = [];
       for (const notification of items) {
-        // Rows this daemon will never answer must not stay unread. The list
-        // is paginated now, so they no longer hide mentions from the poll,
-        // but leaving them would make every poll walk more pages:
-        // - unsubscribed types (the daemon owns this bot's inbox, nothing
-        //   else reads it),
-        // - handled-but-unread rows (a mark-read that failed earlier; once
-        //   their ids aged out of the ledger they would even be re-answered).
-        if (!wantedTypes.has(notification.notification_type)) {
-          await markRead(notification.id);
-          continue;
+        if (
+          !wantedTypes.has(notification.notification_type) ||
+          state.isHandled(notification.id)
+        ) {
+          cleanup.push(notification.id);
+        } else {
+          answerable.push(notification);
         }
-        if (state.isHandled(notification.id)) {
-          await markRead(notification.id);
-          continue;
-        }
-        enqueue(notification, "poll");
       }
+
+      // Queue the mentions FIRST. The cleanup below is a subprocess call, and
+      // a sweep that finds thousands of stale rows would otherwise hold the
+      // one notification this backstop exists to recover behind all of them.
+      const admitted = answerable.slice(0, MAX_ENQUEUE_PER_POLL);
+      for (const notification of admitted) enqueue(notification, "poll");
+      if (answerable.length > admitted.length) {
+        // The rest stay unread, so the next sweep lists them again. Admitting
+        // them all instead would acquire an activity indicator and a refresh
+        // timer per task, which src/activity.ts is dimensioned for ~100 of.
+        console.error(
+          `[poll] ${answerable.length} answerable notifications; queued the oldest ` +
+            `${admitted.length} and left the rest for the next poll`,
+        );
+      }
+      // One subprocess per 500 rows rather than per row.
+      await markReadIdsBestEffort(cleanup);
     } catch (error) {
       console.error("polling backstop failed:", error);
     }
