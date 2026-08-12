@@ -15,6 +15,7 @@ import { config } from "./config.js";
 import { startListener } from "./listen.js";
 import { acquireSingleInstanceLock } from "./lock.js";
 import { buildMentionPrompt, buildSystemPromptAppend, cliTaskRef } from "./prompt.js";
+import { insertByCreatedAt } from "./queue.js";
 import { runAgent, type RunError } from "./runner.js";
 import { State } from "./state.js";
 import {
@@ -73,7 +74,9 @@ async function main(): Promise<void> {
     if (!wantedTypes.has(notification.notification_type)) return;
     if (state.isHandled(notification.id) || queuedIds.has(notification.id)) return;
     queuedIds.add(notification.id);
-    queue.push(notification);
+    // Ordered by created_at, not appended: a poll admits a bounded slice per
+    // sweep, so backlog older than a live WebSocket row can arrive after it.
+    insertByCreatedAt(queue, notification);
     const taskArgs = cliTaskArgs(notification);
     if (notification.task && taskArgs) {
       // Keyed by the stable task id: the CLI args for the same task can

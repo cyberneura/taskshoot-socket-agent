@@ -113,3 +113,35 @@ test("a backlog ending exactly on the cap is returned whole", async () => {
   );
   assert.equal(server.calls.length, MAX_PAGES);
 });
+
+const { insertByCreatedAt } = await import("../src/queue.js");
+
+type Queued = { id: string; created_at: string };
+
+function queueOf(...times: string[]): Queued[] {
+  return times.map((t) => ({ id: t, created_at: t }));
+}
+
+test("a live row queues behind the backlog a later poll admits", async () => {
+  // Startup drains the first batch; a WebSocket row arrives meanwhile.
+  const queue = queueOf("2026-08-12T10:00:00Z") as never[];
+  // The next poll admits an older row the cap had left unread.
+  insertByCreatedAt(queue, { id: "old", created_at: "2026-08-12T09:00:00Z" } as never);
+
+  assert.deepEqual(
+    (queue as unknown as Queued[]).map((q) => q.id),
+    ["old", "2026-08-12T10:00:00Z"],
+  );
+});
+
+test("a newer row still goes last, and ties keep arrival order", async () => {
+  const queue = queueOf("2026-08-12T09:00:00Z", "2026-08-12T10:00:00Z") as never[];
+
+  insertByCreatedAt(queue, { id: "newest", created_at: "2026-08-12T11:00:00Z" } as never);
+  insertByCreatedAt(queue, { id: "tie", created_at: "2026-08-12T10:00:00Z" } as never);
+
+  assert.deepEqual(
+    (queue as unknown as Queued[]).map((q) => q.id),
+    ["2026-08-12T09:00:00Z", "2026-08-12T10:00:00Z", "tie", "newest"],
+  );
+});
