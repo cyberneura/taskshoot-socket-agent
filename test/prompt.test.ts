@@ -65,6 +65,10 @@ test("the system prompt tells the responder to carry knowledge through the threa
   // "at most ONE reply", and a note on a NO_REPLY mention breaks the silence.
   assert.ok(prompt.includes("do not add a second comment"));
   assert.ok(prompt.includes("NO_REPLY means silence"));
+  // "don't repeat yourself" must not turn into "don't answer again". A repeat
+  // request while the task is still unassigned needs the same answer as last
+  // time; staying silent would leave the requester with nothing.
+  assert.ok(prompt.includes("not about withholding replies"));
 });
 
 test("the system prompt carries the bot name and the site extra", () => {

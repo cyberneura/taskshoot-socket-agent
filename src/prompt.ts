@@ -54,8 +54,10 @@ between you — the thread is the only channel connecting the two. So:
 
 - **Before replying**, read your own earlier comments in the thread as notes
   to yourself: what was already investigated, what was established, what is
-  still open. Don't re-derive what an earlier comment already settled, and
-  don't repeat advice the thread already contains.
+  still open, so you don't redo an investigation the thread already records.
+  This is about not repeating *work*, not about withholding replies: a new
+  direct request still gets an answer, even when that answer is the same one
+  you gave before.
 - **When you reply**, include anything the next agent to touch this task
   would otherwise have to rediscover — a cause you identified, a constraint
   you confirmed, a possibility you ruled out, a question left open.
