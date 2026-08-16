@@ -80,6 +80,8 @@ function newSessionName(): string {
 
 /** SIGTERM to SIGKILL grace for the run's process group. */
 const KILL_GRACE_MS = 10_000;
+/** How long the startup check waits for `hermes --version`. */
+const PREFLIGHT_TIMEOUT_MS = 30_000;
 /** How often the escalation re-checks whether the group is still there. */
 const GROUP_POLL_MS = 200;
 /** How long to wait for `close` after `exit` before settling anyway. */
@@ -161,19 +163,33 @@ async function prepareWorkdir(systemPromptAppend: string): Promise<string> {
 export async function preflightHermes(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(config.hermesBin, ["--version"], { stdio: "ignore" });
-    child.on("error", (error) =>
+    // Bounded: a wrapper that hangs here would otherwise stop the daemon
+    // before authentication and the listener ever start — it would look alive
+    // to the supervisor while answering nothing, which is harder to notice
+    // than a crash loop.
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(
+        new Error(
+          `\`${config.hermesBin} --version\` did not finish within ` +
+            `${PREFLIGHT_TIMEOUT_MS / 1000}s. Check TSSA_HERMES_BIN.`,
+        ),
+      );
+    }, PREFLIGHT_TIMEOUT_MS);
+    child.on("error", (error) => {
+      clearTimeout(timer);
       reject(
         new Error(
           `TSSA_AGENT_BACKEND=hermes but \`${config.hermesBin} --version\` could not run ` +
             `(${error.message}). Install the Hermes CLI or set TSSA_HERMES_BIN.`,
         ),
-      ),
-    );
-    child.on("close", (code) =>
-      code === 0
-        ? resolve()
-        : reject(new Error(`\`${config.hermesBin} --version\` exited with ${code}`)),
-    );
+      );
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`\`${config.hermesBin} --version\` exited with ${code}`));
+    });
   });
 }
 
