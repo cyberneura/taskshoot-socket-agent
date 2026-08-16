@@ -11,12 +11,14 @@
  * same handled-id ledger, which is what prevents double replies.
  */
 import { ActivityIndicator } from "./activity.js";
+import { preflightHermes } from "./backends/hermes.js";
 import { config } from "./config.js";
 import { startListener } from "./listen.js";
 import { acquireSingleInstanceLock } from "./lock.js";
 import { buildMentionPrompt, buildSystemPromptAppend, cliTaskRef } from "./prompt.js";
 import { insertByCreatedAt } from "./queue.js";
 import { runAgent, type RunError } from "./runner.js";
+import { isShuttingDown, onShutdown } from "./shutdown.js";
 import { State } from "./state.js";
 import {
   cliTaskArgs,
@@ -41,6 +43,10 @@ async function main(): Promise<void> {
   // been expected to answer.
   const bootedAt = Date.now();
   acquireSingleInstanceLock();
+  // Only the hermes backend is checked: this daemon spawns that binary itself,
+  // whereas Claude Code is located by the Agent SDK and second-guessing it here
+  // could refuse to start a host that works.
+  if (config.agentBackend === "hermes") await preflightHermes();
   const me = await whoAmI();
   console.log(`authenticated as ${me.display_name} (${me.id})`);
 
@@ -87,7 +93,7 @@ async function main(): Promise<void> {
       );
     }
     console.log(`[${source}] queued ${notification.id} (${notification.title})`);
-    if (drainingEnabled) void drain();
+    if (drainingEnabled && !isShuttingDown()) void drain();
   };
 
   // A sweep left answerable rows behind (admission cap). They stay unread, so
@@ -103,7 +109,11 @@ async function main(): Promise<void> {
     if (working) return;
     working = true;
     try {
-      for (let next = queue.shift(); next; next = queue.shift()) {
+      // Stop pulling work the moment shutdown starts: a run begun now would be
+      // killed part-way, possibly after posting, and the ledger entry recording
+      // it would never be written. What stays queued stays unread, and the next
+      // daemon answers it exactly once.
+      for (let next = queue.shift(); next && !isShuttingDown(); next = queue.shift()) {
         // Re-check the ledger at dequeue time, and keep the id in queuedIds
         // until the run finished: an agent run takes minutes, and a poll (or
         // the WS catch-up) firing mid-run must not re-enqueue the mention we
@@ -114,6 +124,9 @@ async function main(): Promise<void> {
           // ahead of it would have nothing to clear server-side, and the
           // late set would show "thinking" after the answer.
           if (hold) await hold.ready;
+          // Re-checked: the loop condition was evaluated before that await,
+          // and a signal arriving in between must not start a run.
+          if (isShuttingDown()) break;
           await handle(next);
         }
         queuedIds.delete(next.id);
@@ -152,14 +165,14 @@ async function main(): Promise<void> {
       try {
         run = await runAgent(prompt, { systemPromptAppend, resumeSessionId });
       } catch (error) {
-        // Retry with a fresh session ONLY when the resume never established
-        // (the stored session expired or was cleaned up) — otherwise this
-        // mention would never be answered. A failure after the session
-        // initialized may have already posted a comment (e.g. max turns hit
-        // after replying), so re-running it here would double-reply; those
-        // go to the backstop like any other failure.
-        const established = (error as RunError).sessionEstablished === true;
-        if (!resumeSessionId || established) throw error;
+        // Retry with a fresh session ONLY when the backend reports the stored
+        // session itself as unusable (expired or cleaned up) — otherwise this
+        // mention would never be answered. Every other failure goes to the
+        // backstop untouched: a run that failed after posting must not be
+        // repeated, and a run that never started must not cost us a still
+        // valid conversation, which starting fresh would overwrite.
+        const unusable = (error as RunError).sessionUnusable === true;
+        if (!resumeSessionId || !unusable) throw error;
         console.error(`resume of session ${resumeSessionId} failed; retrying fresh:`, error);
         run = await runAgent(prompt, { systemPromptAppend });
       }
@@ -172,6 +185,13 @@ async function main(): Promise<void> {
       state.markHandled(notification.id);
       await markRead(notification.id);
     } catch (error) {
+      // Keep the session of a failed run: the backstop will retry this
+      // notification, and without the session the retry starts a fresh
+      // conversation where the agent cannot see a reply it may already have
+      // posted — and posts a second one. Resuming instead puts its own earlier
+      // comment back in context, where the policy tells it not to repeat.
+      const failedSessionId = (error as RunError).sessionId;
+      if (taskId && failedSessionId) state.saveSession(taskId, failedSessionId);
       console.error(`agent run failed for ${notification.id}; the backstop will retry:`, error);
     }
   };
@@ -299,6 +319,9 @@ async function main(): Promise<void> {
   // older ones; one sort puts the whole startup backlog in thread order
   // before the first handle runs.
   queue.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  // Registers the signal handlers even when no backend needs cleanup, so the
+  // daemon always stops admitting work on the first signal.
+  onShutdown(() => {});
   drainingEnabled = true;
   void drain();
   setInterval(poll, config.pollMinutes * 60 * 1000);

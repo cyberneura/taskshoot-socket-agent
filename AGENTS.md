@@ -1,13 +1,15 @@
 # taskshoot-socket-agent — AI エージェント向けガイド
 
-Taskshoot のメンションに Claude Agent SDK で自動返信する常駐デーモン。
+Taskshoot のメンションに AI エージェントで自動返信する常駐デーモン。
+エージェントのバックエンドは差し替え可能 (Claude Agent SDK / Hermes Agent CLI)。
 概要・セットアップは README.md を参照。ここには開発時に繰り返し使う情報だけを書く。
 
 ## 技術スタック
 
 - Node.js >= 20 / TypeScript (ESM, `type: module`)
 - pnpm
-- `@anthropic-ai/claude-agent-sdk`
+- `@anthropic-ai/claude-agent-sdk` (バックエンド `claude`)
+- Hermes Agent CLI (バックエンド `hermes`。npm 依存ではなくホストのコマンド)
 - テスト: Node 標準の `node --test` + tsx (AAA パターン)
 
 ## コマンド
@@ -60,11 +62,19 @@ FATAL に見える起動失敗が毎回 1 回入る)。
 - `src/taskshoot.ts` — taskshoot CLI の薄いラッパー (通知・既読・アクティビティ)
 - `src/activity.ts` — 「回答を考えています…」インジケーター (タスクごとの参照カウント +
   promise チェーン直列化 + 全体セマフォ)
-- `src/runner.ts` — Claude Agent SDK の実行
+- `src/runner.ts` — バックエンドの選択 (`TSSA_AGENT_BACKEND`)
+- `src/backends/types.ts` — バックエンドの契約 (`runAgent(prompt, opts) -> {result, sessionId}`)
+- `src/backends/claude.ts` — Claude Agent SDK (既定)
+- `src/backends/hermes.ts` — Hermes Agent CLI
+- `src/shutdown.ts` — 停止状態 (受付を閉じる + クリーンアップ登録)
 - `src/state.ts` — handled-id 台帳とセッション保存 (二重返信防止の正本)
 
 ## 変更時の注意
 
+- 停止時は「動いているものを止める」だけでは足りない。kill された run は reject するので
+  キューが次のメンションを取り出し、猶予中に投稿してしまう。その返信は台帳に記録されない
+  (記録するデーモンが落ちるため) ので、再起動後にもう一度投稿される。**受付を閉じる**のが
+  対で必要。`src/shutdown.ts` がその正本。
 - 二重返信防止は handled-id 台帳が正本。WS は ACK 無し・再接続時の catch-up 上限ありのため
   信頼しない設計。マーク順序 (read → ledger) には crash safety の理由がコメントで書いてある。
 - アクティビティインジケーターは best-effort (失敗しても run を止めない)。並行性の不変条件

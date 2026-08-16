@@ -3,9 +3,13 @@
 A daemon that answers [Taskshoot](https://taskshoot.com) mentions in (near)
 real time. It subscribes to the notification WebSocket through
 [`taskshoot listen`](https://github.com/cyberneura/taskshoot-cli) and runs one
-[Claude Agent SDK](https://docs.anthropic.com/en/docs/claude-code/sdk) session
-per mention; the agent reads the task thread and posts its reply with
+agent per mention; the agent reads the task thread and posts its reply with
 `taskshoot task comment` itself.
+
+The agent backend is pluggable (`TSSA_AGENT_BACKEND`):
+[Claude Agent SDK](https://docs.anthropic.com/en/docs/claude-code/sdk) in-process
+(`claude`, the default) or the [Hermes Agent](https://github.com/NousResearch/hermes-agent)
+CLI (`hermes`), for hosts whose main job is browser / desktop work.
 
 ```
 taskshoot listen (WebSocket, JSON Lines)
@@ -13,7 +17,7 @@ taskshoot listen (WebSocket, JSON Lines)
         ▼
   serial queue ── handled-id ledger (no double replies)
         ▼
-Claude Agent SDK run ──> taskshoot task comment <ref> "..."
+  agent run   ──────> taskshoot task comment <ref> "..."
 ```
 
 ## What it does — and does not — do
@@ -41,7 +45,14 @@ Claude Agent SDK run ──> taskshoot task comment <ref> "..."
 - The [`taskshoot` CLI](https://github.com/cyberneura/taskshoot-cli) >= 0.7.0
   on PATH, authenticated as the bot user (a **write** API key; see
   `taskshoot config init`)
-- Claude Code installed and authenticated on the host
+- The agent for the backend you select (`TSSA_AGENT_BACKEND`), on PATH and
+  authenticated:
+  - `claude` (default) — Claude Code
+  - `hermes` — the Hermes CLI
+
+  The daemon checks the `hermes` binary at startup and refuses to start when it
+  is missing, because otherwise every mention would fail at spawn and stay
+  unread while the backstop retries it.
 
 ## Installing
 
@@ -87,11 +98,14 @@ environment. Deployment templates (both variants):
 |---|---|---|
 | `TSSA_NOTIFICATION_TYPES` | `task_mentioned` | Notification types to subscribe to (comma-separated) |
 | `TSSA_POLL_MINUTES` | `30` | Polling backstop interval |
+| `TSSA_AGENT_BACKEND` | `claude` | Which agent runs a mention: `claude` (Agent SDK, in-process) or `hermes` (Hermes CLI) |
 | `TSSA_AGENT_TIMEOUT_MINUTES` | `20` | Hard timeout for one agent run |
-| `TSSA_AGENT_CWD` | `~/workspace` | Working directory for the agent |
+| `TSSA_AGENT_CWD` | `~/workspace` | Working directory for the agent (backend `claude` only) |
+| `TSSA_HERMES_BIN` | `hermes` | The Hermes CLI binary (backend `hermes`) |
+| `TSSA_HERMES_WORKDIR` | `<state dir>/hermes-workspace` | Run directory for backend `hermes`; it owns the `AGENTS.md` there |
 | `TSSA_STATE_DIR` | `~/.local/state/taskshoot-socket-agent` | Session ids + handled-notification ledger |
 | `TSSA_TASKSHOOT_BIN` | `taskshoot` | The CLI binary |
-| `TSSA_EXTRA_SYSTEM_PROMPT` | (empty) | Site policy appended to the agent's system prompt |
+| `TSSA_EXTRA_SYSTEM_PROMPT` | (empty) | Site policy appended to the agent's operating policy |
 | `TSSA_EXTRA_PATH` | (empty) | Prepended to PATH by `bin/start.sh` |
 
 ## Design notes
@@ -116,23 +130,33 @@ environment. Deployment templates (both variants):
 
 ## Security model — read before deploying
 
-The daemon runs the agent unattended with `bypassPermissions`, because there
-is no human at the prompt to approve tools. There is deliberately no blanket
-PreToolUse allow hook: a hook's "allow" skips the normal permission
-evaluation — deny rules included — whereas `bypassPermissions` on its own
-still honors them.
-**Bypassing permissions does not protect against prompt injection**: anyone
-who can write into a task thread the bot reads can try to steer the agent.
-The system-prompt policy ("no real work, no secrets") is guidance the model
-follows, not enforcement. The enforcement layers are:
+The daemon runs its agent unattended and approves every tool automatically,
+because there is no human at the prompt. **That does not protect against
+prompt injection**: anyone who can write into a task thread the bot reads can
+try to steer the agent. The operating policy ("no real work, no secrets") is
+guidance the model follows, not enforcement.
 
-- the host's Claude settings deny lists (`user`, `project` and `local`
-  settings are all loaded), and
-- host isolation: run this only on a machine dedicated to the bot, holding
-  nothing you would not let the bot's mention audience reach.
+What enforcement exists depends on the backend:
 
-This is the same trade-off as running any autonomous coding agent on the
-host; if that is not acceptable, do not deploy this daemon.
+| | `claude` | `hermes` |
+|---|---|---|
+| How tools are approved | `bypassPermissions` | `--yolo` |
+| Deny lists | the host's Claude settings (`user`, `project` and `local` are all loaded) still apply | **none — Hermes has no equivalent** |
+| Policy delivery | system prompt | `AGENTS.md` in the run directory |
+| Remaining enforcement | deny lists + host isolation | **host isolation only** |
+
+On the `claude` backend there is deliberately no blanket PreToolUse allow
+hook: a hook's "allow" skips the normal permission evaluation — deny rules
+included — whereas `bypassPermissions` on its own still honors them.
+
+On the `hermes` backend there is no configuration-level restriction at all.
+Anything the agent can reach from the shell, it can read and write. Choose it
+only where host isolation alone is an acceptable boundary.
+
+Either way: run this only on a machine dedicated to the bot, holding nothing
+you would not let the bot's mention audience reach. This is the same trade-off
+as running any autonomous agent on the host; if that is not acceptable, do not
+deploy this daemon.
 
 ## License
 

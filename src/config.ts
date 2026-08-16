@@ -10,6 +10,15 @@
 import { homedir } from "node:os";
 import path from "node:path";
 
+function enumEnv<T extends string>(name: string, allowed: readonly T[], fallback: T): T {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  if (!(allowed as readonly string[]).includes(raw)) {
+    throw new Error(`${name} must be one of ${allowed.join(" | ")}, got ${raw}`);
+  }
+  return raw as T;
+}
+
 function intEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -19,6 +28,9 @@ function intEnv(name: string, fallback: number): number {
   }
   return value;
 }
+
+const stateDir =
+  process.env.TSSA_STATE_DIR ?? path.join(homedir(), ".local", "state", "taskshoot-socket-agent");
 
 export const config = {
   /** Notification types to subscribe to. Mentions only by default: task
@@ -32,16 +44,28 @@ export const config = {
    * here. */
   pollMinutes: intEnv("TSSA_POLL_MINUTES", 30),
 
-  /** Hard timeout for one Agent SDK run. */
+  /** Which agent runs a mention. `claude` uses the Claude Agent SDK in-process;
+   * `hermes` shells out to the Hermes Agent CLI. Default stays `claude` so
+   * existing hosts are unaffected by adding a backend. */
+  agentBackend: enumEnv("TSSA_AGENT_BACKEND", ["claude", "hermes"], "claude"),
+
+  /** Hard timeout for one agent run. */
   agentTimeoutMinutes: intEnv("TSSA_AGENT_TIMEOUT_MINUTES", 20),
 
   /** Working directory the agent runs in. */
   agentCwd: process.env.TSSA_AGENT_CWD ?? path.join(homedir(), "workspace"),
 
+  /** The `hermes` binary (backend `hermes` only; must be on PATH by default). */
+  hermesBin: process.env.TSSA_HERMES_BIN ?? "hermes",
+
+  /** Working directory for the `hermes` backend. Separate from `agentCwd`
+   * because the backend writes its policy to `AGENTS.md` there and must own
+   * that file — see src/backends/hermes.ts. */
+  hermesWorkdir:
+    process.env.TSSA_HERMES_WORKDIR ?? path.join(stateDir, "hermes-workspace"),
+
   /** Where session ids and handled notification ids are persisted. */
-  stateDir:
-    process.env.TSSA_STATE_DIR ??
-    path.join(homedir(), ".local", "state", "taskshoot-socket-agent"),
+  stateDir,
 
   /** The `taskshoot` binary (must be on PATH by default). */
   taskshootBin: process.env.TSSA_TASKSHOOT_BIN ?? "taskshoot",
@@ -49,3 +73,14 @@ export const config = {
   /** Extra text appended to the agent's system prompt (site policy). */
   extraSystemPrompt: process.env.TSSA_EXTRA_SYSTEM_PROMPT ?? "",
 };
+
+// The hermes backend runs in its own directory (it owns that directory's
+// AGENTS.md), so TSSA_AGENT_CWD would be silently ignored. Fail instead: an
+// operator who set it meant the agent to run somewhere specific, and finding
+// out from behaviour is far more expensive than finding out at startup.
+if (config.agentBackend === "hermes" && process.env.TSSA_AGENT_CWD) {
+  throw new Error(
+    "TSSA_AGENT_CWD has no effect with TSSA_AGENT_BACKEND=hermes; " +
+      "use TSSA_HERMES_WORKDIR (the hermes backend needs a directory it owns)",
+  );
+}
