@@ -36,9 +36,9 @@ if (args.includes("--help") || args.includes("-h")) {
   console.log(`taskshoot-socket-agent ${pkg.version}
 
 Answers Taskshoot mentions in near real time: subscribes to the notification
-WebSocket via \`taskshoot listen\` and runs one Claude Agent SDK session per
-mention. Takes no arguments — it is configured entirely through environment
-variables and runs until stopped.
+WebSocket via \`taskshoot listen\` and runs one agent per mention. Takes no
+arguments — it is configured entirely through environment variables and runs
+until stopped.
 
 Usage:
   taskshoot-socket-agent          start the daemon (foreground)
@@ -48,14 +48,23 @@ Usage:
 Environment:
   TSSA_NOTIFICATION_TYPES   notification types to subscribe to (task_mentioned)
   TSSA_POLL_MINUTES         polling backstop interval (30)
+  TSSA_AGENT_BACKEND        which agent answers: claude | hermes (claude)
   TSSA_AGENT_TIMEOUT_MINUTES  hard timeout for one agent run (20)
-  TSSA_AGENT_CWD            working directory for the agent (~/workspace)
+  TSSA_AGENT_CWD            working directory for the agent, backend claude
+                            only (~/workspace)
+  TSSA_HERMES_BIN           the hermes CLI binary, backend hermes (hermes)
+  TSSA_HERMES_WORKDIR       run directory for backend hermes; it owns the
+                            AGENTS.md there (<state dir>/hermes-workspace)
   TSSA_STATE_DIR            session ids + handled-notification ledger
   TSSA_TASKSHOOT_BIN        the taskshoot CLI binary (taskshoot)
-  TSSA_EXTRA_SYSTEM_PROMPT  site policy appended to the agent's system prompt
+  TSSA_EXTRA_SYSTEM_PROMPT  site policy appended to the agent's operating policy
 
-Requires the \`taskshoot\` CLI (>= 0.7.0, authenticated) and Claude Code on
-PATH. Full documentation: ${pkg.homepage ?? pkg.repository?.url ?? ""}`);
+Requires the \`taskshoot\` CLI (>= 0.7.0, authenticated) on PATH, plus the
+agent for the chosen backend: Claude Code (claude) or the hermes CLI (hermes).
+
+SECURITY: the agent runs unattended with tools auto-approved. On backend
+hermes there are no deny lists at all — host isolation is the only boundary.
+Full documentation: ${pkg.homepage ?? pkg.repository?.url ?? ""}`);
   process.exit(0);
 }
 
