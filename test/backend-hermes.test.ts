@@ -32,9 +32,6 @@ switch (process.env.FAKE_HERMES_MODE) {
   case "fail-quiet":
     process.stderr.write("boom");
     process.exit(3);
-  case "fail-after-output":
-    process.stdout.write("partial reply");
-    process.exit(3);
   default:
     process.stdout.write("done");
 }
@@ -93,8 +90,12 @@ test("resumes the stored session instead of inventing a new one", async () => {
   assert.equal(run.sessionId, "tssa-existing");
 });
 
-test("a failure with no output is retryable", async () => {
+test("a run that started is never retried, even when it produced no output", async () => {
   // Arrange
+  // `hermes -z` prints its answer only at the end, so a run that posted its
+  // comment and then failed emits nothing. Treating silence as "the session
+  // never established" would make the daemon re-run the mention and reply
+  // twice, so anything past a successful spawn counts as established.
   process.env.FAKE_HERMES_MODE = "fail-quiet";
 
   // Act
@@ -105,23 +106,6 @@ test("a failure with no output is retryable", async () => {
 
   // Assert
   assert.ok(error, "a non-zero exit must reject");
-  assert.equal(error.sessionEstablished, false);
-  assert.match(error.message, /boom/);
-});
-
-test("a failure after the agent produced output is not retryable", async () => {
-  // Arrange
-  // Output before the failure means a comment may already be posted, so the
-  // daemon must not re-run this mention.
-  process.env.FAKE_HERMES_MODE = "fail-after-output";
-
-  // Act
-  const error = await runHermes("p", { systemPromptAppend: "policy" }).then(
-    () => null,
-    (thrown) => thrown,
-  );
-
-  // Assert
-  assert.ok(error, "a non-zero exit must reject");
   assert.equal(error.sessionEstablished, true);
+  assert.match(error.message, /boom/);
 });

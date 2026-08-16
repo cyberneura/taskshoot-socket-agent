@@ -123,23 +123,33 @@ environment. Deployment templates (both variants):
 
 ## Security model — read before deploying
 
-The daemon runs the agent unattended with `bypassPermissions`, because there
-is no human at the prompt to approve tools. There is deliberately no blanket
-PreToolUse allow hook: a hook's "allow" skips the normal permission
-evaluation — deny rules included — whereas `bypassPermissions` on its own
-still honors them.
-**Bypassing permissions does not protect against prompt injection**: anyone
-who can write into a task thread the bot reads can try to steer the agent.
-The system-prompt policy ("no real work, no secrets") is guidance the model
-follows, not enforcement. The enforcement layers are:
+The daemon runs its agent unattended and approves every tool automatically,
+because there is no human at the prompt. **That does not protect against
+prompt injection**: anyone who can write into a task thread the bot reads can
+try to steer the agent. The operating policy ("no real work, no secrets") is
+guidance the model follows, not enforcement.
 
-- the host's Claude settings deny lists (`user`, `project` and `local`
-  settings are all loaded), and
-- host isolation: run this only on a machine dedicated to the bot, holding
-  nothing you would not let the bot's mention audience reach.
+What enforcement exists depends on the backend:
 
-This is the same trade-off as running any autonomous coding agent on the
-host; if that is not acceptable, do not deploy this daemon.
+| | `claude` | `hermes` |
+|---|---|---|
+| How tools are approved | `bypassPermissions` | `--yolo` |
+| Deny lists | the host's Claude settings (`user`, `project` and `local` are all loaded) still apply | **none — Hermes has no equivalent** |
+| Policy delivery | system prompt | `AGENTS.md` in the run directory |
+| Remaining enforcement | deny lists + host isolation | **host isolation only** |
+
+On the `claude` backend there is deliberately no blanket PreToolUse allow
+hook: a hook's "allow" skips the normal permission evaluation — deny rules
+included — whereas `bypassPermissions` on its own still honors them.
+
+On the `hermes` backend there is no configuration-level restriction at all.
+Anything the agent can reach from the shell, it can read and write. Choose it
+only where host isolation alone is an acceptable boundary.
+
+Either way: run this only on a machine dedicated to the bot, holding nothing
+you would not let the bot's mention audience reach. This is the same trade-off
+as running any autonomous agent on the host; if that is not acceptable, do not
+deploy this daemon.
 
 ## License
 

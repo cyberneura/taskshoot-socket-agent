@@ -77,6 +77,7 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let spawned = false;
 
     const timer = setTimeout(
       () => {
@@ -93,14 +94,23 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
       stderr += chunk.toString();
     });
 
-    // Output before the failure means the agent was already talking, so the
-    // run may have posted its comment already. The daemon uses this to decide
-    // whether retrying is safe; treat "produced nothing" as not established.
-    const established = () => stdout.trim() !== "";
+    // Anything past a successful spawn counts as established, because the run
+    // may already have posted its comment via a tool call. Final output is NOT
+    // a usable proxy: `hermes -z` prints its answer only at the end, so a run
+    // that commented and then timed out emits nothing — and the daemon would
+    // read "not established" as "the stored session was unusable", retry the
+    // mention fresh, and reply twice.
+    //
+    // There is also nothing to recover by retrying: an unknown `-c` name makes
+    // Hermes start a new session instead of failing, so this backend has no
+    // "the resume itself failed" mode for that path to fix.
+    child.on("spawn", () => {
+      spawned = true;
+    });
 
     child.on("error", (error) => {
       clearTimeout(timer);
-      reject(runError(error, established()));
+      reject(runError(error, spawned));
     });
 
     child.on("close", (code, signal) => {
@@ -109,7 +119,7 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
         reject(
           runError(
             new Error(`hermes run exceeded ${config.agentTimeoutMinutes} minutes and was killed`),
-            established(),
+            spawned,
           ),
         );
         return;
@@ -121,7 +131,7 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
               `hermes exited with ${signal ? `signal ${signal}` : `code ${code}`}: ` +
                 `${stderr.trim().slice(-500) || "(no stderr)"}`,
             ),
-            established(),
+            spawned,
           ),
         );
         return;
