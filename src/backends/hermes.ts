@@ -148,17 +148,37 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
     const timer = setTimeout(
       () => {
         timedOut = true;
-        killTree(child, "SIGTERM");
-        // Escalate rather than wait forever for a wedged tool call.
-        graceTimer = setTimeout(() => killTree(child, "SIGKILL"), KILL_GRACE_MS);
+        terminateGroup();
       },
       config.agentTimeoutMinutes * 60 * 1000,
     );
+
+    /**
+     * Ends the run's whole process group.
+     *
+     * Called for every abnormal end, not just the timeout: Hermes exiting
+     * non-zero says nothing about the tool subprocesses it started, and as the
+     * group leader it takes none of them with it. A survivor is an unattended
+     * `--yolo` process still free to act — and to post a late comment while
+     * the backstop retries the mention.
+     *
+     * The SIGKILL escalation is deliberately NOT cancelled when the run
+     * settles: settling means Hermes is gone, which is exactly when a
+     * subprocess that ignored SIGTERM would otherwise be left alive for good.
+     * It is unref'd so it never keeps a process alive on its own, and it is a
+     * no-op once the group is gone.
+     */
+    const terminateGroup = () => {
+      killTree(child, "SIGTERM");
+      if (!graceTimer) {
+        graceTimer = setTimeout(() => killTree(child, "SIGKILL"), KILL_GRACE_MS);
+        graceTimer.unref();
+      }
+    };
     let graceTimer: NodeJS.Timeout | undefined;
 
     const clearTimers = () => {
       clearTimeout(timer);
-      if (graceTimer) clearTimeout(graceTimer);
       if (closeFallback) clearTimeout(closeFallback);
     };
 
@@ -202,6 +222,7 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
     function finish(code: number | null, signal: NodeJS.Signals | null) {
       clearTimers();
       if (timedOut) {
+        terminateGroup();
         settle(() =>
           reject(
             runError(
@@ -215,7 +236,8 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
         );
         return;
       }
-      if (code !== 0) {
+      if (code !== 0 || signal) {
+        terminateGroup();
         settle(() =>
           reject(
             runError(

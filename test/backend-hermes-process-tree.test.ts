@@ -48,7 +48,7 @@ function alive(pid: number): boolean {
   }
 }
 
-test("settles even when a tool subprocess outlives hermes holding the pipe", async () => {
+test("settles and takes the tool subprocess down with it", async () => {
   // Act
   const error = await runHermes("p", { systemPromptAppend: "policy" }).then(
     () => null,
@@ -56,13 +56,19 @@ test("settles even when a tool subprocess outlives hermes holding the pipe", asy
   );
 
   // Assert
-  // Reaching this line at all is the assertion that matters: without the
-  // exit-based fallback the promise would never settle.
+  // Settling at all is the first assertion: without the exit-based fallback
+  // the promise never settles, because the grandchild holds the pipe open.
   assert.ok(error, "a non-zero exit must reject");
   assert.match(error.message, /exited with/);
 
-  // Clean up the grandchild this test deliberately leaked.
+  // And the grandchild must be gone. Hermes exiting non-zero says nothing
+  // about the tools it started, and as the group leader it takes none of them
+  // with it — a survivor is an unattended --yolo process still free to post a
+  // late comment while the backstop retries this mention.
   const { readFileSync } = await import("node:fs");
   const pid = Number(readFileSync(grandchildPidFile, "utf8"));
-  if (alive(pid)) process.kill(pid, "SIGKILL");
+  for (let i = 0; i < 50 && alive(pid); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.equal(alive(pid), false, "the run's process group must not outlive it");
 });
