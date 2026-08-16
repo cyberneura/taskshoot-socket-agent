@@ -18,10 +18,27 @@
 import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk";
 
 import { config } from "../config.js";
-import { isShuttingDown } from "../shutdown.js";
+import { isShuttingDown, onShutdown } from "../shutdown.js";
 import { runError, type AgentRunResult, type RunOptions } from "./types.js";
 
+/** In-flight runs, so shutdown can cut them off instead of letting them post. */
+const liveAborts = new Set<AbortController>();
+let cleanupRegistered = false;
+
+function registerCleanup(): void {
+  if (cleanupRegistered) return;
+  cleanupRegistered = true;
+  // Refusing to *start* runs is not enough: a run already executing tools will
+  // happily post its comment during the shutdown grace, and the ledger entry
+  // that records it is written after the SDK returns — by a daemon that is
+  // about to exit. The restarted daemon then answers the same mention again.
+  onShutdown(() => {
+    for (const controller of liveAborts) controller.abort();
+  });
+}
+
 export async function runClaude(prompt: string, options: RunOptions): Promise<AgentRunResult> {
+  registerCleanup();
   // A run started now would be cut off part-way through the shutdown grace,
   // possibly after posting — and the ledger entry recording it is written by
   // the daemon that is about to exit. Leaving the mention unread makes the
@@ -29,6 +46,7 @@ export async function runClaude(prompt: string, options: RunOptions): Promise<Ag
   if (isShuttingDown()) throw runError(new Error("daemon is shutting down"), false);
 
   const abortController = new AbortController();
+  liveAborts.add(abortController);
   const timeoutId = setTimeout(
     () => abortController.abort(),
     config.agentTimeoutMinutes * 60 * 1000,
@@ -77,5 +95,6 @@ export async function runClaude(prompt: string, options: RunOptions): Promise<Ag
     return { result, sessionId };
   } finally {
     clearTimeout(timeoutId);
+    liveAborts.delete(abortController);
   }
 }

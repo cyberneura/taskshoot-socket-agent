@@ -226,7 +226,15 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
     const terminateGroup = () => {
       killTree(child, "SIGTERM");
       if (!graceTimer) {
-        graceTimer = setTimeout(() => killTree(child, "SIGKILL"), KILL_GRACE_MS);
+        graceTimer = setTimeout(() => {
+          killTree(child, "SIGKILL");
+          // Only now is the group certainly gone. Until then it stays in
+          // liveRuns: a descendant that ignored SIGTERM is still out there,
+          // and if the daemon is told to stop during this window, the force
+          // phase has to be able to find it — this timer is unref'd and
+          // outlasts the daemon's own grace, so it cannot be relied on.
+          liveRuns.delete(child);
+        }, KILL_GRACE_MS);
         graceTimer.unref();
       }
     };
@@ -260,7 +268,10 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
 
     child.on("error", (error) => {
       clearTimers();
-      liveRuns.delete(child);
+      // Nothing was started when the spawn itself failed; otherwise the group
+      // may exist and is cleaned up on the normal schedule.
+      if (spawned) terminateGroup();
+      else liveRuns.delete(child);
       settle(() => reject(runError(error, spawned, spawned ? sessionId : undefined)));
     });
 
@@ -282,7 +293,6 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
       // inherited the pipes would otherwise keep acting unattended after the
       // mention is marked handled.
       terminateGroup();
-      liveRuns.delete(child);
       if (timedOut) {
         settle(() =>
           reject(
