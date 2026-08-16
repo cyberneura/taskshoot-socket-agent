@@ -3,9 +3,13 @@
 A daemon that answers [Taskshoot](https://taskshoot.com) mentions in (near)
 real time. It subscribes to the notification WebSocket through
 [`taskshoot listen`](https://github.com/cyberneura/taskshoot-cli) and runs one
-[Claude Agent SDK](https://docs.anthropic.com/en/docs/claude-code/sdk) session
-per mention; the agent reads the task thread and posts its reply with
+agent per mention; the agent reads the task thread and posts its reply with
 `taskshoot task comment` itself.
+
+The agent backend is pluggable (`TSSA_AGENT_BACKEND`):
+[Claude Agent SDK](https://docs.anthropic.com/en/docs/claude-code/sdk) in-process
+(`claude`, the default) or the [Hermes Agent](https://github.com/NousResearch/hermes-agent)
+CLI (`hermes`), for hosts whose main job is browser / desktop work.
 
 ```
 taskshoot listen (WebSocket, JSON Lines)
@@ -13,7 +17,7 @@ taskshoot listen (WebSocket, JSON Lines)
         ▼
   serial queue ── handled-id ledger (no double replies)
         ▼
-Claude Agent SDK run ──> taskshoot task comment <ref> "..."
+  agent run   ──────> taskshoot task comment <ref> "..."
 ```
 
 ## What it does — and does not — do
@@ -87,11 +91,14 @@ environment. Deployment templates (both variants):
 |---|---|---|
 | `TSSA_NOTIFICATION_TYPES` | `task_mentioned` | Notification types to subscribe to (comma-separated) |
 | `TSSA_POLL_MINUTES` | `30` | Polling backstop interval |
+| `TSSA_AGENT_BACKEND` | `claude` | Which agent runs a mention: `claude` (Agent SDK, in-process) or `hermes` (Hermes CLI) |
 | `TSSA_AGENT_TIMEOUT_MINUTES` | `20` | Hard timeout for one agent run |
-| `TSSA_AGENT_CWD` | `~/workspace` | Working directory for the agent |
+| `TSSA_AGENT_CWD` | `~/workspace` | Working directory for the agent (backend `claude` only) |
+| `TSSA_HERMES_BIN` | `hermes` | The Hermes CLI binary (backend `hermes`) |
+| `TSSA_HERMES_WORKDIR` | `<state dir>/hermes-workspace` | Run directory for backend `hermes`; it owns the `AGENTS.md` there |
 | `TSSA_STATE_DIR` | `~/.local/state/taskshoot-socket-agent` | Session ids + handled-notification ledger |
 | `TSSA_TASKSHOOT_BIN` | `taskshoot` | The CLI binary |
-| `TSSA_EXTRA_SYSTEM_PROMPT` | (empty) | Site policy appended to the agent's system prompt |
+| `TSSA_EXTRA_SYSTEM_PROMPT` | (empty) | Site policy appended to the agent's operating policy |
 | `TSSA_EXTRA_PATH` | (empty) | Prepended to PATH by `bin/start.sh` |
 
 ## Design notes

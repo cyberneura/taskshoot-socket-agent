@@ -1,13 +1,15 @@
 # taskshoot-socket-agent — AI エージェント向けガイド
 
-Taskshoot のメンションに Claude Agent SDK で自動返信する常駐デーモン。
+Taskshoot のメンションに AI エージェントで自動返信する常駐デーモン。
+エージェントのバックエンドは差し替え可能 (Claude Agent SDK / Hermes Agent CLI)。
 概要・セットアップは README.md を参照。ここには開発時に繰り返し使う情報だけを書く。
 
 ## 技術スタック
 
 - Node.js >= 20 / TypeScript (ESM, `type: module`)
 - pnpm
-- `@anthropic-ai/claude-agent-sdk`
+- `@anthropic-ai/claude-agent-sdk` (バックエンド `claude`)
+- Hermes Agent CLI (バックエンド `hermes`。npm 依存ではなくホストのコマンド)
 - テスト: Node 標準の `node --test` + tsx (AAA パターン)
 
 ## コマンド
@@ -60,7 +62,10 @@ FATAL に見える起動失敗が毎回 1 回入る)。
 - `src/taskshoot.ts` — taskshoot CLI の薄いラッパー (通知・既読・アクティビティ)
 - `src/activity.ts` — 「回答を考えています…」インジケーター (タスクごとの参照カウント +
   promise チェーン直列化 + 全体セマフォ)
-- `src/runner.ts` — Claude Agent SDK の実行
+- `src/runner.ts` — バックエンドの選択 (`TSSA_AGENT_BACKEND`)
+- `src/backends/types.ts` — バックエンドの契約 (`runAgent(prompt, opts) -> {result, sessionId}`)
+- `src/backends/claude.ts` — Claude Agent SDK (既定)
+- `src/backends/hermes.ts` — Hermes Agent CLI
 - `src/state.ts` — handled-id 台帳とセッション保存 (二重返信防止の正本)
 
 ## 変更時の注意
