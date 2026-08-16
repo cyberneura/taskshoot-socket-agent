@@ -91,14 +91,27 @@ const CLOSE_FALLBACK_MS = 2_000;
  * group is already gone in the common case (the process exited between the
  * timeout firing and this call), and there is nothing to recover either way.
  */
-function killTree(child: { pid?: number }, signal: NodeJS.Signals): void {
-  if (child.pid === undefined) return;
+/**
+ * Signals the run's whole process group. Returns whether the group was still
+ * there to receive it.
+ *
+ * Existence is probed with signal 0 first, because a group id is just a number
+ * and the kernel reuses it: the escalation fires ten seconds after the run
+ * ended, and by then that number can belong to somebody else's process group.
+ * Same reason there is no fallback to the positive pid.
+ */
+function killTree(child: { pid?: number }, signal: NodeJS.Signals): boolean {
+  if (child.pid === undefined) return false;
+  try {
+    process.kill(-child.pid, 0);
+  } catch {
+    return false; // already gone — do not signal a recycled id
+  }
   try {
     process.kill(-child.pid, signal);
+    return true;
   } catch {
-    // The group is gone. Deliberately no fallback to the positive pid: the
-    // escalation fires seconds later, by which time that number may belong to
-    // an unrelated process — signalling it would kill a stranger.
+    return false;
   }
 }
 
@@ -229,7 +242,12 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
      * no-op once the group is gone.
      */
     const terminateGroup = () => {
-      killTree(child, "SIGTERM");
+      if (!killTree(child, "SIGTERM")) {
+        // Nothing left of the group: no escalation to schedule, and nothing
+        // for the daemon's shutdown to find.
+        liveRuns.delete(child);
+        return;
+      }
       if (!graceTimer) {
         graceTimer = setTimeout(() => {
           killTree(child, "SIGKILL");
