@@ -80,6 +80,8 @@ function newSessionName(): string {
 
 /** SIGTERM to SIGKILL grace for the run's process group. */
 const KILL_GRACE_MS = 10_000;
+/** How often the escalation re-checks whether the group is still there. */
+const GROUP_POLL_MS = 200;
 /** How long to wait for `close` after `exit` before settling anyway. */
 const CLOSE_FALLBACK_MS = 2_000;
 
@@ -100,7 +102,7 @@ const CLOSE_FALLBACK_MS = 2_000;
  * ended, and by then that number can belong to somebody else's process group.
  * Same reason there is no fallback to the positive pid.
  */
-function killTree(child: { pid?: number }, signal: NodeJS.Signals): boolean {
+function killTree(child: { pid?: number }, signal: NodeJS.Signals | 0): boolean {
   if (child.pid === undefined) return false;
   try {
     process.kill(-child.pid, 0);
@@ -249,19 +251,36 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
         return;
       }
       if (!graceTimer) {
-        graceTimer = setTimeout(() => {
-          killTree(child, "SIGKILL");
-          // Only now is the group certainly gone. Until then it stays in
-          // liveRuns: a descendant that ignored SIGTERM is still out there,
-          // and if the daemon is told to stop during this window, the force
-          // phase has to be able to find it — this timer is unref'd and
-          // outlasts the daemon's own grace, so it cannot be relied on.
-          liveRuns.delete(child);
-        }, KILL_GRACE_MS);
+        // Watched rather than slept through. A pgid is only reassigned once
+        // the group is empty, so a group observed alive continuously since our
+        // SIGTERM is still ours — but a single check ten seconds later cannot
+        // tell "still alive" from "died and the number was reused". Sampling
+        // shrinks that blind spot to one interval, and observing the group
+        // gone even once cancels the escalation for good.
+        //
+        // The residual race cannot be closed with pid/pgid APIs alone; the
+        // alternative — never escalating — leaves a descendant that ignored
+        // SIGTERM running unattended, which is worse.
+        const startedAt = Date.now();
+        graceTimer = setInterval(() => {
+          const stillThere = killTree(child, 0);
+          if (!stillThere) {
+            clearInterval(graceTimer);
+            // Only now is the group certainly gone. Until then it stays in
+            // liveRuns so the daemon's shutdown can still find it.
+            liveRuns.delete(child);
+            return;
+          }
+          if (Date.now() - startedAt >= KILL_GRACE_MS) {
+            clearInterval(graceTimer);
+            killTree(child, "SIGKILL");
+            liveRuns.delete(child);
+          }
+        }, GROUP_POLL_MS);
         graceTimer.unref();
       }
     };
-    let graceTimer: NodeJS.Timeout | undefined;
+    let graceTimer: NodeJS.Timeout;
 
     const clearTimers = () => {
       clearTimeout(timer);
