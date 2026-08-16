@@ -59,6 +59,32 @@ async function prepareWorkdir(systemPromptAppend: string): Promise<string> {
   return dir;
 }
 
+/**
+ * Fails fast when the configured `hermes` is not runnable.
+ *
+ * Without this the daemon starts perfectly, then every mention dies at spawn
+ * and stays unread while the backstop retries it — the misconfiguration is
+ * only visible in the logs of runs that already looked like failures.
+ */
+export async function preflightHermes(): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(config.hermesBin, ["--version"], { stdio: "ignore" });
+    child.on("error", (error) =>
+      reject(
+        new Error(
+          `TSSA_AGENT_BACKEND=hermes but \`${config.hermesBin} --version\` could not run ` +
+            `(${error.message}). Install the Hermes CLI or set TSSA_HERMES_BIN.`,
+        ),
+      ),
+    );
+    child.on("close", (code) =>
+      code === 0
+        ? resolve()
+        : reject(new Error(`\`${config.hermesBin} --version\` exited with ${code}`)),
+    );
+  });
+}
+
 export async function runHermes(prompt: string, options: RunOptions): Promise<AgentRunResult> {
   const cwd = await prepareWorkdir(options.systemPromptAppend);
   const sessionId = options.resumeSessionId ?? newSessionName();

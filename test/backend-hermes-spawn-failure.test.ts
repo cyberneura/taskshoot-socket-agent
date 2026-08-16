@@ -16,7 +16,7 @@ process.env.TSSA_HERMES_BIN = path.join(dir, "does-not-exist");
 process.env.TSSA_HERMES_WORKDIR = path.join(dir, "workspace");
 process.env.TSSA_STATE_DIR = dir;
 
-const { runHermes } = await import("../src/backends/hermes.js");
+const { runHermes, preflightHermes } = await import("../src/backends/hermes.js");
 
 test("a binary that cannot be spawned is retryable", async () => {
   // Act
@@ -30,4 +30,18 @@ test("a binary that cannot be spawned is retryable", async () => {
   // fresh retry is safe.
   assert.ok(error, "a spawn failure must reject");
   assert.equal(error.sessionEstablished, false);
+});
+
+test("preflight refuses to start when the binary is missing", async () => {
+  // Act
+  const error = await preflightHermes().then(
+    () => null,
+    (thrown) => thrown,
+  );
+
+  // Assert
+  // Starting anyway would look healthy while every mention died at spawn and
+  // stayed unread.
+  assert.ok(error, "startup must fail loudly");
+  assert.match(error.message, /TSSA_HERMES_BIN|Hermes CLI/);
 });

@@ -11,6 +11,7 @@
  * same handled-id ledger, which is what prevents double replies.
  */
 import { ActivityIndicator } from "./activity.js";
+import { preflightHermes } from "./backends/hermes.js";
 import { config } from "./config.js";
 import { startListener } from "./listen.js";
 import { acquireSingleInstanceLock } from "./lock.js";
@@ -41,6 +42,10 @@ async function main(): Promise<void> {
   // been expected to answer.
   const bootedAt = Date.now();
   acquireSingleInstanceLock();
+  // Only the hermes backend is checked: this daemon spawns that binary itself,
+  // whereas Claude Code is located by the Agent SDK and second-guessing it here
+  // could refuse to start a host that works.
+  if (config.agentBackend === "hermes") await preflightHermes();
   const me = await whoAmI();
   console.log(`authenticated as ${me.display_name} (${me.id})`);
 

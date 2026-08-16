@@ -17,7 +17,8 @@
   put `command -v taskshoot-socket-agent` in ProgramArguments and drop
   WorkingDirectory. start.sh is what reads .env and extends PATH, and a global
   install does not use it, so add an EnvironmentVariables dict carrying PATH
-  (node, taskshoot and claude must all be on it) and every TSSA_* override.
+  (node, taskshoot and the agent binary for your TSSA_AGENT_BACKEND —
+  claude or hermes — must all be on it) and every TSSA_* override.
 -->
 <plist version="1.0">
 <dict>

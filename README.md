@@ -45,7 +45,14 @@ taskshoot listen (WebSocket, JSON Lines)
 - The [`taskshoot` CLI](https://github.com/cyberneura/taskshoot-cli) >= 0.7.0
   on PATH, authenticated as the bot user (a **write** API key; see
   `taskshoot config init`)
-- Claude Code installed and authenticated on the host
+- The agent for the backend you select (`TSSA_AGENT_BACKEND`), on PATH and
+  authenticated:
+  - `claude` (default) — Claude Code
+  - `hermes` — the Hermes CLI
+
+  The daemon checks the `hermes` binary at startup and refuses to start when it
+  is missing, because otherwise every mention would fail at spawn and stay
+  unread while the backstop retries it.
 
 ## Installing
 
