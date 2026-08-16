@@ -30,6 +30,26 @@
  * `hermes` processes (a cron loop, a chat gateway) may run concurrently on the
  * same host and would race a "newest session" lookup.
  *
+ * ## Process lifecycle
+ *
+ * Hermes is a child process that starts children of its own (browser, shell),
+ * so every ending has to account for the whole group. The rules, in one place
+ * because fixing them one case at a time is how they got missed:
+ *
+ * | Ending | Settle | Group |
+ * |---|---|---|
+ * | spawn failed | reject, retryable | nothing exists |
+ * | exit 0 | resolve | terminate — tools may still be running |
+ * | exit non-zero / signal | reject | terminate |
+ * | timeout | reject | terminate (SIGTERM, then SIGKILL after a grace) |
+ * | daemon shutting down | — | terminate every live run, then exit |
+ *
+ * Two asymmetries are deliberate. `exit` (not `close`) settles the run,
+ * because a descendant holding the inherited pipes keeps `close` from ever
+ * firing — which would leave the daemon's serial queue stuck. And the SIGKILL
+ * escalation is never cancelled: the run settling means Hermes is gone, which
+ * is exactly when a tool that ignored SIGTERM would be left behind for good.
+ *
  * SECURITY: `--yolo` runs every tool without confirmation — unavoidable with
  * no human at the prompt. Hermes has no deny-list equivalent to Claude Code's
  * settings, so on this backend the policy is guidance only and host isolation
@@ -56,6 +76,8 @@ function newSessionName(): string {
 const KILL_GRACE_MS = 10_000;
 /** How long to wait for `close` after `exit` before settling anyway. */
 const CLOSE_FALLBACK_MS = 2_000;
+/** How long running groups get to stop when the daemon itself is shutting down. */
+const SHUTDOWN_GRACE_MS = 2_000;
 
 /**
  * Signals the run's whole process group, not just Hermes itself.
@@ -70,11 +92,38 @@ function killTree(child: { pid?: number }, signal: NodeJS.Signals): void {
   try {
     process.kill(-child.pid, signal);
   } catch {
-    try {
-      process.kill(child.pid, signal);
-    } catch {
-      // already gone
-    }
+    // The group is gone. Deliberately no fallback to the positive pid: the
+    // escalation fires seconds later, by which time that number may belong to
+    // an unrelated process — signalling it would kill a stranger.
+  }
+}
+
+/** Runs whose process group may still exist. Used to clean up on shutdown. */
+const liveRuns = new Set<{ pid?: number }>();
+let shutdownHooked = false;
+
+/**
+ * Takes running Hermes groups down when the daemon is stopped.
+ *
+ * `detached` puts each run outside the daemon's own process group, so neither
+ * supervisor's `stopasgroup` nor launchd reaches it: a restart would leave the
+ * old run free to post its reply — never recorded in the ledger, because the
+ * daemon that would have recorded it is gone — while the new daemon retries
+ * the same mention and replies again.
+ */
+function hookShutdown(): void {
+  if (shutdownHooked) return;
+  shutdownHooked = true;
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.on(signal, () => {
+      for (const child of liveRuns) killTree(child, "SIGTERM");
+      // A short grace, then go. Supervisors escalate to SIGKILL on their own
+      // schedule, so shutdown must not linger.
+      setTimeout(() => {
+        for (const child of liveRuns) killTree(child, "SIGKILL");
+        process.exit(signal === "SIGINT" ? 130 : 143);
+      }, SHUTDOWN_GRACE_MS);
+    });
   }
 }
 
@@ -130,6 +179,8 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     });
+    hookShutdown();
+    liveRuns.add(child);
 
     let stdout = "";
     let stderr = "";
@@ -205,6 +256,7 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
 
     child.on("error", (error) => {
       clearTimers();
+      liveRuns.delete(child);
       settle(() => reject(runError(error, spawned, spawned ? sessionId : undefined)));
     });
 
@@ -221,8 +273,13 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
 
     function finish(code: number | null, signal: NodeJS.Signals | null) {
       clearTimers();
+      // Unconditional, including a clean exit: Hermes finishing says nothing
+      // about the tools it started, and a background browser or shell that
+      // inherited the pipes would otherwise keep acting unattended after the
+      // mention is marked handled.
+      terminateGroup();
+      liveRuns.delete(child);
       if (timedOut) {
-        terminateGroup();
         settle(() =>
           reject(
             runError(
@@ -237,7 +294,6 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
         return;
       }
       if (code !== 0 || signal) {
-        terminateGroup();
         settle(() =>
           reject(
             runError(

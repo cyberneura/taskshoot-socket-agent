@@ -17,6 +17,14 @@ const dir = await mkdtemp(path.join(tmpdir(), "tssa-hermes-tree-"));
 const bin = path.join(dir, "fake-hermes");
 const grandchildPidFile = path.join(dir, "grandchild.pid");
 
+/** Waits for a pid to disappear; returns whether it did. */
+async function waitGone(pid: number): Promise<boolean> {
+  for (let i = 0; i < 50 && alive(pid); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return !alive(pid);
+}
+
 // Leaves a detached grandchild that keeps stdout open, then exits non-zero.
 await writeFile(
   bin,
@@ -27,7 +35,7 @@ const grandchild = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"]
   stdio: ["ignore", "inherit", "inherit"],
 });
 fs.writeFileSync(${JSON.stringify(grandchildPidFile)}, String(grandchild.pid));
-process.exit(3);
+process.exit(Number(process.env.FAKE_HERMES_EXIT ?? "3"));
 `,
 );
 await chmod(bin, 0o755);
@@ -67,8 +75,22 @@ test("settles and takes the tool subprocess down with it", async () => {
   // late comment while the backstop retries this mention.
   const { readFileSync } = await import("node:fs");
   const pid = Number(readFileSync(grandchildPidFile, "utf8"));
-  for (let i = 0; i < 50 && alive(pid); i++) {
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  assert.equal(alive(pid), false, "the run's process group must not outlive it");
+  assert.equal(await waitGone(pid), true, "the run's process group must not outlive it");
+});
+
+test("a clean exit also takes its tool subprocesses down", async () => {
+  // Arrange
+  // Hermes finishing successfully says nothing about the tools it started; a
+  // background browser or shell left behind would keep acting unattended after
+  // the mention is marked handled.
+  process.env.FAKE_HERMES_EXIT = "0";
+
+  // Act
+  const run = await runHermes("p", { systemPromptAppend: "policy" });
+
+  // Assert
+  assert.match(run.sessionId, /^tssa-/);
+  const { readFileSync } = await import("node:fs");
+  const pid = Number(readFileSync(grandchildPidFile, "utf8"));
+  assert.equal(await waitGone(pid), true, "a clean run must not leave descendants");
 });
