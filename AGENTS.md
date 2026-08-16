@@ -66,10 +66,15 @@ FATAL に見える起動失敗が毎回 1 回入る)。
 - `src/backends/types.ts` — バックエンドの契約 (`runAgent(prompt, opts) -> {result, sessionId}`)
 - `src/backends/claude.ts` — Claude Agent SDK (既定)
 - `src/backends/hermes.ts` — Hermes Agent CLI
+- `src/shutdown.ts` — 停止状態 (受付を閉じる + クリーンアップ登録)
 - `src/state.ts` — handled-id 台帳とセッション保存 (二重返信防止の正本)
 
 ## 変更時の注意
 
+- 停止時は「動いているものを止める」だけでは足りない。kill された run は reject するので
+  キューが次のメンションを取り出し、猶予中に投稿してしまう。その返信は台帳に記録されない
+  (記録するデーモンが落ちるため) ので、再起動後にもう一度投稿される。**受付を閉じる**のが
+  対で必要。`src/shutdown.ts` がその正本。
 - 二重返信防止は handled-id 台帳が正本。WS は ACK 無し・再接続時の catch-up 上限ありのため
   信頼しない設計。マーク順序 (read → ledger) には crash safety の理由がコメントで書いてある。
 - アクティビティインジケーターは best-effort (失敗しても run を止めない)。並行性の不変条件

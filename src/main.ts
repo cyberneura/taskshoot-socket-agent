@@ -18,6 +18,7 @@ import { acquireSingleInstanceLock } from "./lock.js";
 import { buildMentionPrompt, buildSystemPromptAppend, cliTaskRef } from "./prompt.js";
 import { insertByCreatedAt } from "./queue.js";
 import { runAgent, type RunError } from "./runner.js";
+import { isShuttingDown, onShutdown } from "./shutdown.js";
 import { State } from "./state.js";
 import {
   cliTaskArgs,
@@ -92,7 +93,7 @@ async function main(): Promise<void> {
       );
     }
     console.log(`[${source}] queued ${notification.id} (${notification.title})`);
-    if (drainingEnabled) void drain();
+    if (drainingEnabled && !isShuttingDown()) void drain();
   };
 
   // A sweep left answerable rows behind (admission cap). They stay unread, so
@@ -108,7 +109,11 @@ async function main(): Promise<void> {
     if (working) return;
     working = true;
     try {
-      for (let next = queue.shift(); next; next = queue.shift()) {
+      // Stop pulling work the moment shutdown starts: a run begun now would be
+      // killed part-way, possibly after posting, and the ledger entry recording
+      // it would never be written. What stays queued stays unread, and the next
+      // daemon answers it exactly once.
+      for (let next = queue.shift(); next && !isShuttingDown(); next = queue.shift()) {
         // Re-check the ledger at dequeue time, and keep the id in queuedIds
         // until the run finished: an agent run takes minutes, and a poll (or
         // the WS catch-up) firing mid-run must not re-enqueue the mention we
@@ -311,6 +316,9 @@ async function main(): Promise<void> {
   // older ones; one sort puts the whole startup backlog in thread order
   // before the first handle runs.
   queue.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  // Registers the signal handlers even when no backend needs cleanup, so the
+  // daemon always stops admitting work on the first signal.
+  onShutdown(() => {});
   drainingEnabled = true;
   void drain();
   setInterval(poll, config.pollMinutes * 60 * 1000);
