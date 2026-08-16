@@ -136,7 +136,7 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
 
     child.on("error", (error) => {
       clearTimeout(timer);
-      reject(runError(error, spawned));
+      reject(runError(error, spawned, spawned ? sessionId : undefined));
     });
 
     child.on("close", (code, signal) => {
@@ -146,6 +146,7 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
           runError(
             new Error(`hermes run exceeded ${config.agentTimeoutMinutes} minutes and was killed`),
             spawned,
+            sessionId,
           ),
         );
         return;
@@ -158,6 +159,7 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
                 `${stderr.trim().slice(-500) || "(no stderr)"}`,
             ),
             spawned,
+            sessionId,
           ),
         );
         return;

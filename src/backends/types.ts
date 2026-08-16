@@ -21,6 +21,12 @@ export interface AgentRunResult {
  * init may have already posted a comment, so retrying it would double-reply. */
 export interface RunError extends Error {
   sessionEstablished?: boolean;
+  /** The session the failed run was using, when the backend knows it. The
+   * daemon persists this so a retry continues the same conversation: a run
+   * that failed after posting its comment would otherwise be retried in a
+   * brand-new session, where the agent cannot see its own earlier reply and
+   * posts a second one. */
+  sessionId?: string;
 }
 
 export interface RunOptions {
@@ -32,8 +38,13 @@ export interface RunOptions {
 
 export type AgentBackend = (prompt: string, options: RunOptions) => Promise<AgentRunResult>;
 
-export function runError(error: unknown, sessionEstablished: boolean): RunError {
+export function runError(
+  error: unknown,
+  sessionEstablished: boolean,
+  sessionId?: string,
+): RunError {
   const wrapped: RunError = error instanceof Error ? error : new Error(String(error));
   wrapped.sessionEstablished = sessionEstablished;
+  if (sessionId) wrapped.sessionId = sessionId;
   return wrapped;
 }

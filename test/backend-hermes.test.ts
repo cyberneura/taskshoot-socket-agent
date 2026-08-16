@@ -90,6 +90,25 @@ test("resumes the stored session instead of inventing a new one", async () => {
   assert.equal(run.sessionId, "tssa-existing");
 });
 
+test("a failed run reports the session it used, so a retry can continue it", async () => {
+  // Arrange
+  // The first mention on a task has no stored session, so the name exists only
+  // inside the backend. Losing it on failure would send the retry into a fresh
+  // session that cannot see a reply the failed run may already have posted.
+  process.env.FAKE_HERMES_MODE = "fail-quiet";
+
+  // Act
+  const error = await runHermes("p", { systemPromptAppend: "policy" }).then(
+    () => null,
+    (thrown) => thrown,
+  );
+
+  // Assert
+  const recorded = await recordedRun();
+  assert.equal(error.sessionId, recorded.argv[recorded.argv.indexOf("-c") + 1]);
+  assert.match(error.sessionId, /^tssa-/);
+});
+
 test("a run that started is never retried, even when it produced no output", async () => {
   // Arrange
   // `hermes -z` prints its answer only at the end, so a run that posted its

@@ -65,7 +65,7 @@ export async function runClaude(prompt: string, options: RunOptions): Promise<Ag
         }
       }
     } catch (error) {
-      throw runError(error, sessionId !== "");
+      throw runError(error, sessionId !== "", sessionId || undefined);
     }
     return { result, sessionId };
   } finally {

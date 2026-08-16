@@ -30,6 +30,8 @@ test("a binary that cannot be spawned is retryable", async () => {
   // fresh retry is safe.
   assert.ok(error, "a spawn failure must reject");
   assert.equal(error.sessionEstablished, false);
+  // Nothing ran under that name, so there is no conversation worth resuming.
+  assert.equal(error.sessionId, undefined);
 });
 
 test("preflight refuses to start when the binary is missing", async () => {

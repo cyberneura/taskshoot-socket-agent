@@ -177,6 +177,13 @@ async function main(): Promise<void> {
       state.markHandled(notification.id);
       await markRead(notification.id);
     } catch (error) {
+      // Keep the session of a failed run: the backstop will retry this
+      // notification, and without the session the retry starts a fresh
+      // conversation where the agent cannot see a reply it may already have
+      // posted — and posts a second one. Resuming instead puts its own earlier
+      // comment back in context, where the policy tells it not to repeat.
+      const failedSessionId = (error as RunError).sessionId;
+      if (taskId && failedSessionId) state.saveSession(taskId, failedSessionId);
       console.error(`agent run failed for ${notification.id}; the backstop will retry:`, error);
     }
   };
