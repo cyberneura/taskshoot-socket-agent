@@ -52,6 +52,32 @@ function newSessionName(): string {
   return `tssa-${randomUUID()}`;
 }
 
+/** SIGTERM to SIGKILL grace for the run's process group. */
+const KILL_GRACE_MS = 10_000;
+/** How long to wait for `close` after `exit` before settling anyway. */
+const CLOSE_FALLBACK_MS = 2_000;
+
+/**
+ * Signals the run's whole process group, not just Hermes itself.
+ *
+ * The child is spawned detached, so it leads its own group and the negative
+ * pid reaches its tool subprocesses too. Failures are ignored on purpose: the
+ * group is already gone in the common case (the process exited between the
+ * timeout firing and this call), and there is nothing to recover either way.
+ */
+function killTree(child: { pid?: number }, signal: NodeJS.Signals): void {
+  if (child.pid === undefined) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    try {
+      process.kill(child.pid, signal);
+    } catch {
+      // already gone
+    }
+  }
+}
+
 async function prepareWorkdir(systemPromptAppend: string): Promise<string> {
   const dir = config.hermesWorkdir;
   await mkdir(dir, { recursive: true });
@@ -95,23 +121,46 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
   const args = ["-z", prompt, "--yolo", "-c", sessionId];
 
   return await new Promise<AgentRunResult>((resolve, reject) => {
+    // detached: the run gets its own process group. Hermes spawns tool
+    // subprocesses (browser, shell), and killing only the parent would leave
+    // them running --yolo past the hard timeout — free to finish a browser
+    // action or post a late comment while the backstop retries the mention.
     const child = spawn(config.hermesBin, args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     });
 
     let stdout = "";
     let stderr = "";
     let timedOut = false;
     let spawned = false;
+    let settled = false;
+    let closeFallback: NodeJS.Timeout | undefined;
+
+    /** `exit` + `close` + the fallback can all fire; only the first one wins. */
+    const settle = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      action();
+    };
 
     const timer = setTimeout(
       () => {
         timedOut = true;
-        child.kill("SIGKILL");
+        killTree(child, "SIGTERM");
+        // Escalate rather than wait forever for a wedged tool call.
+        graceTimer = setTimeout(() => killTree(child, "SIGKILL"), KILL_GRACE_MS);
       },
       config.agentTimeoutMinutes * 60 * 1000,
     );
+    let graceTimer: NodeJS.Timeout | undefined;
+
+    const clearTimers = () => {
+      clearTimeout(timer);
+      if (graceTimer) clearTimeout(graceTimer);
+      if (closeFallback) clearTimeout(closeFallback);
+    };
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
@@ -135,36 +184,53 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
     });
 
     child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(runError(error, spawned, spawned ? sessionId : undefined));
+      clearTimers();
+      settle(() => reject(runError(error, spawned, spawned ? sessionId : undefined)));
     });
 
-    child.on("close", (code, signal) => {
-      clearTimeout(timer);
+    // `close` waits for the pipes, and a surviving grandchild can hold them
+    // open after Hermes itself is gone — which would leave this promise (and
+    // the daemon's serial queue behind it) pending forever. `exit` is the
+    // process actually ending, so it arms a short fallback that settles the
+    // run with whatever output arrived.
+    child.on("exit", (code, signal) => {
+      closeFallback = setTimeout(() => finish(code, signal), CLOSE_FALLBACK_MS);
+    });
+
+    child.on("close", (code, signal) => finish(code, signal));
+
+    function finish(code: number | null, signal: NodeJS.Signals | null) {
+      clearTimers();
       if (timedOut) {
-        reject(
-          runError(
-            new Error(`hermes run exceeded ${config.agentTimeoutMinutes} minutes and was killed`),
-            spawned,
-            sessionId,
+        settle(() =>
+          reject(
+            runError(
+              new Error(
+                `hermes run exceeded ${config.agentTimeoutMinutes} minutes and was killed`,
+              ),
+              spawned,
+              sessionId,
+            ),
           ),
         );
         return;
       }
       if (code !== 0) {
-        reject(
-          runError(
-            new Error(
-              `hermes exited with ${signal ? `signal ${signal}` : `code ${code}`}: ` +
-                `${stderr.trim().slice(-500) || "(no stderr)"}`,
+        settle(() =>
+          reject(
+            runError(
+              new Error(
+                `hermes exited with ${signal ? `signal ${signal}` : `code ${code}`}: ` +
+                  `${stderr.trim().slice(-500) || "(no stderr)"}`,
+              ),
+              spawned,
+              sessionId,
             ),
-            spawned,
-            sessionId,
           ),
         );
         return;
       }
-      resolve({ result: stdout.trim(), sessionId });
-    });
+      settle(() => resolve({ result: stdout.trim(), sessionId }));
+    }
   });
 }
