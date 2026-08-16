@@ -124,6 +124,9 @@ async function main(): Promise<void> {
           // ahead of it would have nothing to clear server-side, and the
           // late set would show "thinking" after the answer.
           if (hold) await hold.ready;
+          // Re-checked: the loop condition was evaluated before that await,
+          // and a signal arriving in between must not start a run.
+          if (isShuttingDown()) break;
           await handle(next);
         }
         queuedIds.delete(next.id);

@@ -18,9 +18,16 @@
 import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk";
 
 import { config } from "../config.js";
+import { isShuttingDown } from "../shutdown.js";
 import { runError, type AgentRunResult, type RunOptions } from "./types.js";
 
 export async function runClaude(prompt: string, options: RunOptions): Promise<AgentRunResult> {
+  // A run started now would be cut off part-way through the shutdown grace,
+  // possibly after posting — and the ledger entry recording it is written by
+  // the daemon that is about to exit. Leaving the mention unread makes the
+  // next daemon answer it exactly once.
+  if (isShuttingDown()) throw runError(new Error("daemon is shutting down"), false);
+
   const abortController = new AbortController();
   const timeoutId = setTimeout(
     () => abortController.abort(),

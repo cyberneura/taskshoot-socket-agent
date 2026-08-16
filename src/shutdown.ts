@@ -16,9 +16,27 @@
 /** How long running work gets to stop before the process exits. */
 const SHUTDOWN_GRACE_MS = 2_000;
 
+/**
+ * `stop` fires the moment a signal arrives; `force` fires once the grace has
+ * elapsed, immediately before the process exits. Cleanup that can hang — a
+ * process ignoring SIGTERM, say — needs the second phase, because nothing
+ * scheduled by the first is guaranteed to run before exit.
+ */
+export type ShutdownPhase = "stop" | "force";
+
 let shuttingDown = false;
-const handlers: Array<() => void> = [];
+const handlers: Array<(phase: ShutdownPhase) => void> = [];
 let hooked = false;
+
+function runHandlers(phase: ShutdownPhase): void {
+  for (const cleanup of handlers) {
+    try {
+      cleanup(phase);
+    } catch (error) {
+      console.error(`shutdown handler failed (${phase}):`, error);
+    }
+  }
+}
 
 /** True once a stop signal arrived. Callers must not start new work. */
 export function isShuttingDown(): boolean {
@@ -29,7 +47,7 @@ export function isShuttingDown(): boolean {
  * Registers cleanup to run when the daemon is stopping (terminating child
  * process groups, etc.). Installs the signal handlers on first use.
  */
-export function onShutdown(handler: () => void): void {
+export function onShutdown(handler: (phase: ShutdownPhase) => void): void {
   handlers.push(handler);
   if (hooked) return;
   hooked = true;
@@ -38,15 +56,12 @@ export function onShutdown(handler: () => void): void {
       if (shuttingDown) return;
       shuttingDown = true;
       console.log(`${signal} received; stopping`);
-      for (const cleanup of handlers) {
-        try {
-          cleanup();
-        } catch (error) {
-          console.error("shutdown handler failed:", error);
-        }
-      }
+      runHandlers("stop");
       // Supervisors escalate on their own schedule, so do not linger.
-      setTimeout(() => process.exit(signal === "SIGINT" ? 130 : 143), SHUTDOWN_GRACE_MS);
+      setTimeout(() => {
+        runHandlers("force");
+        process.exit(signal === "SIGINT" ? 130 : 143);
+      }, SHUTDOWN_GRACE_MS);
     });
   }
 }

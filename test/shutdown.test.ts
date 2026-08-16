@@ -19,11 +19,11 @@ process.env.TSSA_STATE_DIR = dir;
 const { isShuttingDown, onShutdown } = await import("../src/shutdown.js");
 const { runHermes } = await import("../src/backends/hermes.js");
 
-test("a stop signal closes the intake and runs the cleanup handlers", async () => {
+test("a stop signal closes the intake, then escalates before exiting", async () => {
   // Arrange
-  let cleaned = false;
-  onShutdown(() => {
-    cleaned = true;
+  const phases: string[] = [];
+  onShutdown((phase) => {
+    phases.push(phase);
   });
   // Keep the process alive past the handler's exit timer; asserting on
   // process.exit is not the point here.
@@ -40,7 +40,10 @@ test("a stop signal closes the intake and runs the cleanup handlers", async () =
   await new Promise((r) => setTimeout(r, 2_200));
 
   // Assert
-  assert.equal(cleaned, true, "cleanup must run");
+  // Both phases matter: `stop` gives running work a chance to wind down, and
+  // `force` is the only point guaranteed to run before exit — without it a
+  // process ignoring SIGTERM outlives the daemon.
+  assert.deepEqual(phases, ["stop", "force"]);
   assert.equal(isShuttingDown(), true);
   assert.equal(exitCode, 143);
   process.exit = exit;

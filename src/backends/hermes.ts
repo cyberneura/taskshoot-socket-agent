@@ -113,8 +113,14 @@ let cleanupRegistered = false;
 function registerCleanup(): void {
   if (cleanupRegistered) return;
   cleanupRegistered = true;
-  onShutdown(() => {
-    for (const child of liveRuns) killTree(child, "SIGTERM");
+  onShutdown((phase) => {
+    // SIGTERM first so a run can wind down, then SIGKILL from the force phase
+    // — which runs immediately before the process exits. The per-run
+    // escalation cannot cover this: it is armed only when a run finishes, and
+    // its grace is longer than the daemon's, so a group that ignored SIGTERM
+    // would outlive the daemon and post a late comment while the restarted
+    // one retries the mention.
+    for (const child of liveRuns) killTree(child, phase === "stop" ? "SIGTERM" : "SIGKILL");
   });
 }
 
@@ -163,6 +169,10 @@ export async function runHermes(prompt: string, options: RunOptions): Promise<Ag
   // tool confirmations. The prompt goes through argv, not a shell, so its
   // newlines and quotes need no escaping.
   const args = ["-z", prompt, "--yolo", "-c", sessionId];
+
+  // Re-checked after preparing the workdir: a signal can arrive during that
+  // await, and spawning here is what posts a reply the ledger never records.
+  if (isShuttingDown()) throw runError(new Error("daemon is shutting down"), false);
 
   return await new Promise<AgentRunResult>((resolve, reject) => {
     // detached: the run gets its own process group. Hermes spawns tool
