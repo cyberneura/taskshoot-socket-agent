@@ -165,14 +165,14 @@ async function main(): Promise<void> {
       try {
         run = await runAgent(prompt, { systemPromptAppend, resumeSessionId });
       } catch (error) {
-        // Retry with a fresh session ONLY when the resume never established
-        // (the stored session expired or was cleaned up) — otherwise this
-        // mention would never be answered. A failure after the session
-        // initialized may have already posted a comment (e.g. max turns hit
-        // after replying), so re-running it here would double-reply; those
-        // go to the backstop like any other failure.
-        const established = (error as RunError).sessionEstablished === true;
-        if (!resumeSessionId || established) throw error;
+        // Retry with a fresh session ONLY when the backend reports the stored
+        // session itself as unusable (expired or cleaned up) — otherwise this
+        // mention would never be answered. Every other failure goes to the
+        // backstop untouched: a run that failed after posting must not be
+        // repeated, and a run that never started must not cost us a still
+        // valid conversation, which starting fresh would overwrite.
+        const unusable = (error as RunError).sessionUnusable === true;
+        if (!resumeSessionId || !unusable) throw error;
         console.error(`resume of session ${resumeSessionId} failed; retrying fresh:`, error);
         run = await runAgent(prompt, { systemPromptAppend });
       }

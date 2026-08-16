@@ -18,6 +18,24 @@ process.env.TSSA_STATE_DIR = dir;
 
 const { runHermes, preflightHermes } = await import("../src/backends/hermes.js");
 
+test("a spawn failure on a resume keeps the stored session", async () => {
+  // Act
+  const error = await runHermes("p", {
+    systemPromptAppend: "policy",
+    resumeSessionId: "tssa-existing",
+  }).then(
+    () => null,
+    (thrown) => thrown,
+  );
+
+  // Assert
+  // The run never happened, so the conversation is still good. Reporting it as
+  // unusable would make the daemon start over and overwrite it with an empty
+  // session — losing the thread the agent had been replying in.
+  assert.ok(error, "a spawn failure must reject");
+  assert.notEqual(error.sessionUnusable, true);
+});
+
 test("a binary that cannot be spawned is retryable", async () => {
   // Act
   const error = await runHermes("p", { systemPromptAppend: "policy" }).then(

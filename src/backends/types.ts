@@ -27,6 +27,12 @@ export interface RunError extends Error {
    * brand-new session, where the agent cannot see its own earlier reply and
    * posts a second one. */
   sessionId?: string;
+  /** Set only when the *stored session itself* turned out to be unusable — the
+   * one case where retrying the mention on a fresh session is right. A run
+   * that failed for any other reason (the backend could not even start, say)
+   * must leave it unset: the conversation is still valid, and starting over
+   * would replace it with an empty one. */
+  sessionUnusable?: boolean;
 }
 
 export interface RunOptions {
@@ -42,9 +48,11 @@ export function runError(
   error: unknown,
   sessionEstablished: boolean,
   sessionId?: string,
+  sessionUnusable = false,
 ): RunError {
   const wrapped: RunError = error instanceof Error ? error : new Error(String(error));
   wrapped.sessionEstablished = sessionEstablished;
   if (sessionId) wrapped.sessionId = sessionId;
+  if (sessionUnusable) wrapped.sessionUnusable = true;
   return wrapped;
 }

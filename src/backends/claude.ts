@@ -90,7 +90,14 @@ export async function runClaude(prompt: string, options: RunOptions): Promise<Ag
         }
       }
     } catch (error) {
-      throw runError(error, sessionId !== "", sessionId || undefined);
+      // A resume that never reached init is the definition of an unusable
+      // stored session: the SDK could not pick the conversation up.
+      throw runError(
+        error,
+        sessionId !== "",
+        sessionId || undefined,
+        options.resumeSessionId !== undefined && sessionId === "",
+      );
     }
     return { result, sessionId };
   } finally {
