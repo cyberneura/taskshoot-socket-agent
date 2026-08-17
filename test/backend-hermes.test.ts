@@ -70,6 +70,12 @@ test("names a new session, passes --yolo, and writes the policy into the run dir
 
   const policy = await readFile(path.join(workdir, "AGENTS.md"), "utf8");
   assert.match(policy, /POLICY BODY/);
+  // Backend-scoped clarification: Hermes reads the shared "when not to reply"
+  // rule literally and stays silent on a plain greeting, where the other
+  // backend answers. The shared policy is left alone so only this runtime
+  // changes.
+  assert.match(policy, /addressed to/);
+  assert.match(policy, /greeting/);
   // realpath on both sides: macOS resolves /var to /private/var for the child.
   assert.equal(await realpath(recorded.cwd), await realpath(workdir));
 });
