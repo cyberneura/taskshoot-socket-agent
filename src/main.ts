@@ -17,7 +17,7 @@ import { startListener } from "./listen.js";
 import { acquireSingleInstanceLock } from "./lock.js";
 import { buildMentionPrompt, buildSystemPromptAppend, cliTaskRef } from "./prompt.js";
 import { insertByCreatedAt } from "./queue.js";
-import { runAgent, type RunError } from "./runner.js";
+import { backendPolicyNote, runAgent, type RunError } from "./runner.js";
 import { isShuttingDown, onShutdown } from "./shutdown.js";
 import { State } from "./state.js";
 import {
@@ -51,7 +51,11 @@ async function main(): Promise<void> {
   console.log(`authenticated as ${me.display_name} (${me.id})`);
 
   const state = new State();
-  const systemPromptAppend = buildSystemPromptAppend(me.display_name, config.extraSystemPrompt);
+  const systemPromptAppend = buildSystemPromptAppend(
+    me.display_name,
+    config.extraSystemPrompt,
+    backendPolicyNote(),
+  );
   const wantedTypes = new Set(config.types.split(",").map((t) => t.trim()));
 
   // Mentions are processed strictly one at a time. Parallel agent runs on the

@@ -73,6 +73,28 @@ test("the system prompt tells the responder to carry knowledge through the threa
   assert.ok(prompt.includes("not about withholding replies"));
 });
 
+test("a backend note sits between the shared policy and the site policy", () => {
+  // Arrange / Act
+  const prompt = buildSystemPromptAppend("millais", "SITE POLICY", "BACKEND NOTE");
+
+  // Assert
+  // The site policy is configured per host and has to stay the last word: a
+  // backend note placed after it would silently override a site restriction.
+  assert.ok(prompt.indexOf("BACKEND NOTE") > prompt.indexOf("Taskshoot mention responder"));
+  assert.ok(prompt.indexOf("SITE POLICY") > prompt.indexOf("BACKEND NOTE"));
+  assert.ok(prompt.trimEnd().endsWith("SITE POLICY"));
+});
+
+test("omitting the backend note leaves the prompt unchanged", () => {
+  // Arrange / Act
+  // The backend that needs no clarification must see byte-identical text.
+  const withNote = buildSystemPromptAppend("millais", "SITE POLICY", "");
+  const without = buildSystemPromptAppend("millais", "SITE POLICY");
+
+  // Assert
+  assert.equal(withNote, without);
+});
+
 test("the system prompt carries the bot name and the site extra", () => {
   // Arrange / Act
   const prompt = buildSystemPromptAppend("millais", "EXTRA POLICY LINE");

@@ -69,13 +69,9 @@ test("names a new session, passes --yolo, and writes the policy into the run dir
   assert.equal(run.result, "done");
 
   const policy = await readFile(path.join(workdir, "AGENTS.md"), "utf8");
+  // The backend writes exactly what it was handed; the clarification is folded
+  // in upstream by buildSystemPromptAppend so the site policy stays last.
   assert.match(policy, /POLICY BODY/);
-  // Backend-scoped clarification: Hermes reads the shared "when not to reply"
-  // rule literally and stays silent on a plain greeting, where the other
-  // backend answers. The shared policy is left alone so only this runtime
-  // changes.
-  assert.match(policy, /addressed to/);
-  assert.match(policy, /greeting/);
   // realpath on both sides: macOS resolves /var to /private/var for the child.
   assert.equal(await realpath(recorded.cwd), await realpath(workdir));
 });

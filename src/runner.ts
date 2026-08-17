@@ -6,7 +6,7 @@
  * `claude` so hosts that predate this switch keep their behaviour.
  */
 import { runClaude } from "./backends/claude.js";
-import { runHermes } from "./backends/hermes.js";
+import { HERMES_REPLY_NOTE, runHermes } from "./backends/hermes.js";
 import type { AgentBackend } from "./backends/types.js";
 import { config } from "./config.js";
 
@@ -19,3 +19,8 @@ const backends: Record<typeof config.agentBackend, AgentBackend> = {
 
 export const runAgent: AgentBackend = (prompt, options) =>
   backends[config.agentBackend](prompt, options);
+
+/** Policy text the selected backend needs added to the shared policy, if any. */
+export function backendPolicyNote(): string {
+  return config.agentBackend === "hermes" ? HERMES_REPLY_NOTE : "";
+}

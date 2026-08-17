@@ -18,7 +18,17 @@ export function cliTaskRef(notification: Notification): string | null {
   return `${task.id} --project ${task.project_key}`;
 }
 
-export function buildSystemPromptAppend(botName: string, extra: string): string {
+/**
+ * `backendNote` is a clarification the running backend needs (see
+ * `runner.backendPolicyNote`). It sits after the shared policy — which it
+ * qualifies — and before `extra`, because the site policy is configured per
+ * host and has to stay the last word.
+ */
+export function buildSystemPromptAppend(
+  botName: string,
+  extra: string,
+  backendNote = "",
+): string {
   // The Taskshoot CLI may be installed under a non-default name/path
   // (TSSA_TASKSHOOT_BIN); the instructions must name the binary that
   // actually exists on this host.
@@ -93,7 +103,7 @@ next agent work.
 - Never post secrets (API keys, tokens, file contents of credential files).
 - Do not modify repositories, create branches, or push from this responder.`;
 
-  return extra ? `${policy}\n\n${extra}` : policy;
+  return [policy, backendNote, extra].filter(Boolean).join("\n\n");
 }
 
 export function buildMentionPrompt(notification: Notification, isResume: boolean): string {
