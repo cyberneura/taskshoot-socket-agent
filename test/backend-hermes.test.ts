@@ -69,6 +69,8 @@ test("names a new session, passes --yolo, and writes the policy into the run dir
   assert.equal(run.result, "done");
 
   const policy = await readFile(path.join(workdir, "AGENTS.md"), "utf8");
+  // The backend writes exactly what it was handed; the clarification is folded
+  // in upstream by buildSystemPromptAppend so the site policy stays last.
   assert.match(policy, /POLICY BODY/);
   // realpath on both sides: macOS resolves /var to /private/var for the child.
   assert.equal(await realpath(recorded.cwd), await realpath(workdir));
