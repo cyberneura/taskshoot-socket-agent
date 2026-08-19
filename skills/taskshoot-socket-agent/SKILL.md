@@ -117,18 +117,21 @@ Notes that are easy to get wrong:
 
 ## Why it will not start
 
-The daemon is meant to fail loudly rather than run half-configured. In order:
+The daemon is meant to fail loudly rather than run half-configured. Roughly in
+the order they are reached:
 
 1. **`taskshoot-socket-agent is installed but not built`** — the compile step
    was skipped at install (see above).
-2. **`another taskshoot-socket-agent is running (pid N)`** — the pid file in
+2. **A configuration error** — see the notes above. The configuration is
+   validated as the module loads, so this comes before anything the daemon
+   does, the lock included.
+3. **`another taskshoot-socket-agent is running (pid N)`** — the pid file in
    the state directory is held by a live process. Two daemons sharing a state
    directory would both answer the same mention and race on the ledger. The
    lock is per state directory: two processes with **different**
    `TSSA_STATE_DIR` values do not exclude each other, even on one host, and if
    both authenticate as the same bot they will both answer. A pid file left
    behind by a crash is detected as stale and taken over.
-3. **A configuration error** — see the notes above.
 4. **The `hermes` binary is missing** (backend `hermes` only). Only that
    backend is checked: this daemon spawns that binary itself, whereas Claude
    Code is located by the Agent SDK, and second-guessing it here could refuse
@@ -138,6 +141,16 @@ The daemon is meant to fail loudly rather than run half-configured. In order:
 `authenticated as <name> (<id>)` on stdout is the line that says startup got
 past all of this. Reaching it can take minutes on a slow or flaky connection,
 because the identity call retries.
+
+**The first run on a fresh state directory answers nothing that was already
+waiting.** Unread notifications from before that boot are marked read and
+recorded as handled without running an agent, on the grounds that a bulk reply
+to weeks-old mentions is noise and the people who wrote them have moved on.
+Only mentions from then on get a reply. This is worth knowing twice over: it
+also means **wiping or moving the state directory silently discards the
+current backlog**, and that a mention created during startup is still answered
+(the listener runs before the seeding, and seeding skips what is already
+queued).
 
 ## How work flows, and what that means when something looks wrong
 
@@ -179,8 +192,10 @@ taskshoot listen (WebSocket, JSON Lines)
   posted, which is mitigation, not a guarantee.
 
 So: a mention with no reply is usually either a label mention (by design) or a
-run that failed and is waiting for the backstop — up to `TSSA_POLL_MINUTES`
-away. A duplicated reply points at the ledger: the state directory being wiped,
+run that failed and is waiting for the backstop — normally up to
+`TSSA_POLL_MINUTES` away, but not bounded to a single sweep: on a CLI without
+`notifications list --before` the poll can only see the newest 100 unread
+rows, so a failed mention below that line waits until the ones above it clear. A duplicated reply points at the ledger: the state directory being wiped,
 moved between hosts, the process being killed between comment and save, or the
 id having aged out of the bounded ledger.
 
