@@ -183,7 +183,11 @@ taskshoot listen (WebSocket, JSON Lines)
   what it reads back from the thread.
 - **Failures are retried, completions are not.** A crashed or error-ending run
   leaves the notification unhandled for the backstop to pick up; a completed
-  run — including a deliberate no-reply — marks it handled and read.
+  run — including a deliberate no-reply — records it in the ledger and marks it
+  read. Marking read is best effort: if that call fails it is logged and the
+  run still counts as handled, so the notification stays unread in Taskshoot
+  while the ledger keeps it from being answered again (until the ledger's own
+  bound below applies).
 - **Delivery is at-least-once at the edges.** If the process dies between the
   agent posting its comment and the ledger being written, the mention is
   retried. The ledger is also bounded — the 1000 most recent handled ids — so a
