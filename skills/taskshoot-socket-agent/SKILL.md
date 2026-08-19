@@ -142,11 +142,12 @@ the order they are reached:
 past all of this. Reaching it can take minutes on a slow or flaky connection,
 because the identity call retries.
 
-**The first run on a fresh state directory answers nothing that was already
-waiting.** Unread notifications from before that boot are marked read and
-recorded as handled without running an agent, on the grounds that a bulk reply
-to weeks-old mentions is noise and the people who wrote them have moved on.
-Only mentions from then on get a reply. This is worth knowing twice over: it
+**The first run on a fresh state directory answers almost nothing that was
+already waiting.** Unread notifications older than one minute before that boot
+are marked read and recorded as handled without running an agent, on the
+grounds that a bulk reply to weeks-old mentions is noise and the people who
+wrote them have moved on. The last minute is kept and answered, so a mention
+sent while the daemon was being started is not lost. This is worth knowing twice over: it
 also means **wiping or moving the state directory silently discards the
 current backlog**, and that a mention created during startup is still answered
 (the listener runs before the seeding, and seeding skips what is already
