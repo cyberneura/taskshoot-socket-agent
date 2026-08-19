@@ -68,6 +68,9 @@ FATAL に見える起動失敗が毎回 1 回入る)。
 - `src/backends/hermes.ts` — Hermes Agent CLI
 - `src/shutdown.ts` — 停止状態 (受付を閉じる + クリーンアップ登録)
 - `src/state.ts` — handled-id 台帳とセッション保存 (二重返信防止の正本)
+- `skills/taskshoot-socket-agent/SKILL.md` — 配布用の agent skill
+  (`npx skills add cyberneura/taskshoot-socket-agent`)。`.claude/skills/` には置かない
+  (両方 discovery 対象なので二重に列挙される)
 
 ## 変更時の注意
 
@@ -80,6 +83,16 @@ FATAL に見える起動失敗が毎回 1 回入る)。
 - アクティビティインジケーターは best-effort (失敗しても run を止めない)。並行性の不変条件
   (タスク単位の直列チェーン / refcount / セマフォの bounded fairness / TTL とリフレッシュ供給
   能力の関係) は `src/activity.ts` のコメントが正本。変更時はコメントの前提数値も更新する。
+- **SKILL.md は README の要約にしない。** 読み手はこのアプリを OSS として入れた第三者と
+  そのエージェントで、手元の環境・組織固有の名前・個人のパスは 1 つも書かない。
+  記述は README ではなく**実装と照合する** (README 自身が留保を持つので、写すだけでは
+  検証にならない。要約すると留保が落ちて断定になり、そのまま誤りになる)。
+  散文は実行されないのでテストでは捕まらない。レビューを依頼する時は
+  「文章の内容そのものがレビュー対象」「事実の裏取りをせよ」
+  「このアプリを初めて入れた第三者の環境でも正しいか」を明示する。
+  例: 状態ディレクトリの既定は `homedir()` から組み立てているので macOS でも
+  `~/.local/state/...` になる (プラットフォームの規約には従わない)。
+  「XDG に従う」と書くと誤りになる
 - ソースに `\u0000` 等のエスケープを書く時、生成ツール経由で実バイトが混入すると git が
   ファイルをバイナリ扱いする。コミット前に `git diff --staged --stat` に `Bin` が無いことを
   確認する。
