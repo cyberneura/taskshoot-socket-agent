@@ -156,20 +156,26 @@ taskshoot listen (WebSocket, JSON Lines)
   would race on repositories and on the session store. A burst of mentions is
   answered late, in order, not in parallel.
 - **A later mention in the same task resumes the same session**, so the thread
-  keeps its conversational context.
+  keeps its conversational context — until that session is evicted. The store
+  keeps the 200 most recently used task sessions, so a mention in a task that
+  has been quiet while 200 other tasks were active starts fresh and only knows
+  what it reads back from the thread.
 - **Failures are retried, completions are not.** A crashed or error-ending run
   leaves the notification unhandled for the backstop to pick up; a completed
   run — including a deliberate no-reply — marks it handled and read.
 - **Delivery is at-least-once at the edges.** If the process dies between the
   agent posting its comment and the ledger being written, the mention is
-  retried. The agent is told to read the thread and never repeat a reply it
-  already posted, which is mitigation, not a guarantee.
+  retried. The ledger is also bounded — the 1000 most recent handled ids — so a
+  notification that stayed unread (marking it read can fail) can come back
+  through the polling path once 1000 newer ones have pushed its id out. Either
+  way the agent is told to read the thread and never repeat a reply it already
+  posted, which is mitigation, not a guarantee.
 
 So: a mention with no reply is usually either a label mention (by design) or a
 run that failed and is waiting for the backstop — up to `TSSA_POLL_MINUTES`
-away. A duplicated reply points at the ledger: the state directory being
-wiped, moved between hosts, or the process being killed between comment and
-save.
+away. A duplicated reply points at the ledger: the state directory being wiped,
+moved between hosts, the process being killed between comment and save, or the
+id having aged out of the bounded ledger.
 
 ## Security model — read before deploying
 
