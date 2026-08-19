@@ -40,8 +40,10 @@ Two more behaviours that look like bugs and are not:
 - The `taskshoot` CLI >= 0.7.0 on PATH, authenticated **as the bot user with a
   write API key**. The daemon never handles Taskshoot credentials itself: every
   call shells out to that CLI, which resolves its own credentials.
-  The transient "Thinking about a reply…" indicator needs CLI >= 0.8.0 and is
-  skipped silently on older ones.
+  The transient "Thinking about a reply…" indicator needs CLI >= 0.8.0. On an
+  older CLI the daemon keeps working without it, but it says so on stderr
+  (`[activity] ... unavailable ... disabled`) — that line is a notice, not a
+  failure to chase.
 - The agent for the backend you choose, already authenticated on this host:
   - `claude` (the default) runs the Claude Agent SDK **in this process**. The
     SDK locates Claude Code itself; the daemon never spawns a `claude` binary
@@ -82,7 +84,9 @@ supervisor (Ubuntu) and launchd (macOS) under `deploy/`.
 ## Configuration
 
 Environment variables only; the daemon takes no arguments and runs in the
-foreground until stopped. `--help` prints this list.
+foreground until stopped. `--help` lists the ones the daemon itself reads —
+that is all of these except `TSSA_EXTRA_PATH`, which only `bin/start.sh`
+consumes.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -154,7 +158,10 @@ taskshoot listen (WebSocket, JSON Lines)
   replies. Replying is not idempotent.
 - **Mentions are processed strictly one at a time.** Parallel runs on one host
   would race on repositories and on the session store. A burst of mentions is
-  answered late, in order, not in parallel.
+  answered late rather than in parallel. Ordering holds within what is queued,
+  not across a large backlog: one poll admits at most 100 mentions, so if more
+  than that are waiting, a live mention arriving meanwhile can be answered
+  before the ones left for the next sweep.
 - **A later mention in the same task resumes the same session**, so the thread
   keeps its conversational context — until that session is evicted. The store
   keeps the 200 most recently used task sessions, so a mention in a task that
