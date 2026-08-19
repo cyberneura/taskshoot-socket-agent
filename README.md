@@ -158,6 +158,18 @@ you would not let the bot's mention audience reach. This is the same trade-off
 as running any autonomous agent on the host; if that is not acceptable, do not
 deploy this daemon.
 
+## Agent skill
+
+The repository carries an agent skill (`skills/taskshoot-socket-agent/`) that
+tells a coding agent how to deploy, configure and troubleshoot this daemon:
+
+```bash
+npx skills add cyberneura/taskshoot-socket-agent
+```
+
+It is agent-independent: one file, in the layout that agents supporting the
+`skills/` convention read.
+
 ## License
 
 MIT OR Apache-2.0
