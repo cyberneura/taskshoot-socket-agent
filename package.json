@@ -19,7 +19,7 @@
     "bot"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=20.6"
   },
   "bin": {
     "taskshoot-socket-agent": "bin/taskshoot-socket-agent.mjs"

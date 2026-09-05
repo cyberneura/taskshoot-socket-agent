@@ -36,7 +36,7 @@ Two more behaviours that look like bugs and are not:
 
 ## Requirements
 
-- Node.js >= 20.
+- Node.js >= 20.6.
 - The `taskshoot` CLI >= 0.7.0 on PATH, authenticated **as the bot user with a
   write API key**. The daemon never handles Taskshoot credentials itself: every
   call shells out to that CLI, which resolves its own credentials.

@@ -6,7 +6,7 @@ Taskshoot のメンションに AI エージェントで自動返信する常駐
 
 ## 技術スタック
 
-- Node.js >= 20 / TypeScript (ESM, `type: module`)
+- Node.js >= 20.6 / TypeScript (ESM, `type: module`)
 - pnpm
 - `@anthropic-ai/claude-agent-sdk` (バックエンド `claude`)
 - Hermes Agent CLI (バックエンド `hermes`。npm 依存ではなくホストのコマンド)

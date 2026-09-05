@@ -41,7 +41,7 @@ taskshoot listen (WebSocket, JSON Lines)
 
 ## Requirements
 
-- Node.js >= 20 (pnpm only for a source checkout)
+- Node.js >= 20.6 (the Sentry dependency tree pulls in OpenTelemetry packages that require it; pnpm only for a source checkout)
 - The [`taskshoot` CLI](https://github.com/cyberneura/taskshoot-cli) >= 0.7.0
   on PATH, authenticated as the bot user (a **write** API key; see
   `taskshoot config init`)
