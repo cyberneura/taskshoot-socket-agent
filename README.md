@@ -327,7 +327,12 @@ effect, but it would if in-process HTTP were added.)
 The daemon ends up with 8 of the 17 default integrations; the exact set is
 asserted in the tests, so an SDK rename or addition fails there rather than
 quietly changing what runs. This repository has no CI, so "fails there" means
-at the next `pnpm test` — run it after bumping the SDK.
+at the next `pnpm test` — run it after bumping the SDK. For the same reason
+`@sentry/node` is pinned to an exact version rather than a range: the
+integration filter is a list of names checked against one audited default
+set, and a global install from git does not use the lockfile, so a range
+would let a later minor release bring an integration in without the test
+ever running. Bump it on purpose, with the tests.
 
 #### Three differences left in place, deliberately
 
