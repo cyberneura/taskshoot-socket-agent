@@ -58,6 +58,9 @@ Environment:
   TSSA_STATE_DIR            session ids + handled-notification ledger
   TSSA_TASKSHOOT_BIN        the taskshoot CLI binary (taskshoot)
   TSSA_EXTRA_SYSTEM_PROMPT  site policy appended to the agent's operating policy
+  TSSA_SENTRY_DSN           Sentry DSN; empty disables error reporting (empty)
+  TSSA_SENTRY_ENVIRONMENT   Sentry environment, for grouping deployments
+                            (SDK default)
 
 Requires the \`taskshoot\` CLI (>= 0.7.0, authenticated) on PATH, plus the
 agent for the chosen backend: Claude Code (claude) or the hermes CLI (hermes).

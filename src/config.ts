@@ -72,6 +72,22 @@ export const config = {
 
   /** Extra text appended to the agent's system prompt (site policy). */
   extraSystemPrompt: process.env.TSSA_EXTRA_SYSTEM_PROMPT ?? "",
+
+  /** Sentry DSN. Empty (the default) disables reporting entirely.
+   *
+   * Environment only: this repository is public, so a DSN must never be
+   * committed to it. Hosts that want reporting pass it through whatever they
+   * already use for secrets (a k8s Secret, a `.env` read by the start script,
+   * ...). */
+  sentryDsn: process.env.TSSA_SENTRY_DSN ?? "",
+
+  /** Sentry `environment`. Empty (the default) lets the SDK decide.
+   *
+   * Deliberately not defaulted to the host name: the SDK already puts the
+   * hostname in `server_name`, so that would add no information while creating
+   * one Sentry environment per host — and per pod on Kubernetes, where the
+   * name changes on every restart. */
+  sentryEnvironment: process.env.TSSA_SENTRY_ENVIRONMENT ?? "",
 };
 
 // The hermes backend runs in its own directory (it owns that directory's

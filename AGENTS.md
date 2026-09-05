@@ -67,6 +67,8 @@ FATAL に見える起動失敗が毎回 1 回入る)。
 - `src/backends/claude.ts` — Claude Agent SDK (既定)
 - `src/backends/hermes.ts` — Hermes Agent CLI
 - `src/shutdown.ts` — 停止状態 (受付を閉じる + クリーンアップ登録)
+- `src/sentry.ts` — オプトインのエラー報告 (DSN 無しなら全て no-op。SDK 既定が
+  デーモンの挙動を変える箇所を pin している。README「Error reporting」が正本)
 - `src/state.ts` — handled-id 台帳とセッション保存 (二重返信防止の正本)
 - `skills/taskshoot-socket-agent/SKILL.md` — 配布用の agent skill
   (`npx skills add cyberneura/taskshoot-socket-agent`)。`.claude/skills/` には置かない

@@ -11,6 +11,7 @@
  * same handled-id ledger, which is what prevents double replies.
  */
 import { ActivityIndicator } from "./activity.js";
+import { captureError, flushSentry, initSentry } from "./sentry.js";
 import { preflightHermes } from "./backends/hermes.js";
 import { config } from "./config.js";
 import { startListener } from "./listen.js";
@@ -18,7 +19,7 @@ import { acquireSingleInstanceLock } from "./lock.js";
 import { buildMentionPrompt, buildSystemPromptAppend, cliTaskRef } from "./prompt.js";
 import { insertByCreatedAt } from "./queue.js";
 import { backendPolicyNote, runAgent, type RunError } from "./runner.js";
-import { isShuttingDown, onShutdown } from "./shutdown.js";
+import { closeIntake, isShuttingDown, onShutdown } from "./shutdown.js";
 import { State } from "./state.js";
 import {
   cliTaskArgs,
@@ -42,6 +43,12 @@ async function main(): Promise<void> {
   // first-run backlog cutoff must predate everything this process might have
   // been expected to answer.
   const bootedAt = Date.now();
+  // As early as `main()` allows. Not early enough for everything: `config.ts`
+  // validates the environment while it is being imported, which happens before
+  // this function is called at all — so a typo in `TSSA_POLL_MINUTES` still
+  // exits unreported. That is the likeliest startup failure there is; see the
+  // README.
+  await initSentry();
   acquireSingleInstanceLock();
   // Only the hermes backend is checked: this daemon spawns that binary itself,
   // whereas Claude Code is located by the Agent SDK and second-guessing it here
@@ -331,7 +338,13 @@ async function main(): Promise<void> {
   setInterval(poll, config.pollMinutes * 60 * 1000);
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   console.error("fatal:", error);
+  // Reported before exiting, and flushed: this is the one failure the daemon
+  // cannot retry its way out of. Everything else is deliberately swallowed so
+  // the backstop can try again, which is why a silent host looks healthy.
+  closeIntake();
+  captureError("main", error, undefined, { fatal: true });
+  await flushSentry();
   process.exit(1);
 });
