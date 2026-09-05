@@ -1,6 +1,6 @@
 {
   "name": "taskshoot-socket-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Taskshoot mention-response daemon: subscribes to the notification WebSocket via `taskshoot listen` and answers mentions with a pluggable AI agent backend (Claude Agent SDK or Hermes Agent)",
   "type": "module",
   "license": "MIT OR Apache-2.0",
