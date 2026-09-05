@@ -340,13 +340,15 @@ Each is either bounded by the 500 ms reporting window or needs a host
 configuration nothing here produces, and closing it would cost more than it
 is worth.
 
-- **A fatal error during a signal-driven shutdown races it for the exit
-  code.** `shutdown.ts` exits with 130/143 after its grace period; a fatal
-  error that lands inside that period reports for up to 500 ms and exits 1,
-  and whichever timer fires first wins. (The other order is not a race: once a
-  fatal report has closed the intake, a later signal is ignored and the exit
-  still happens.) Every code involved is non-zero and the supervisor restarts
-  either way, so unifying the two exit paths is not worth the coupling.
+- **A fatal error during a signal-driven shutdown no longer kills the
+  process on the spot.** Without reporting it does, and the shutdown's
+  `force` cleanup (SIGKILL for hermes groups that ignored `stop`) is lost with
+  it. With a handler in place the report is sent and the shutdown is left to
+  own the exit: `force` runs and the process exits 130/143 when the grace
+  period ends, up to two seconds later than it would have died. Keeping the
+  instant death would have meant keeping the lost cleanup, which is the one
+  thing the signal path exists to guarantee. (A signal arriving *after* a
+  fatal report has closed the intake is ignored, and that exit still happens.)
 - **An in-flight run gets up to 500 ms longer.** The fatal path closes the
   intake but does not run the cleanup the signal path runs. What happens to a
   run already executing then depends on the backend. A hermes run is a

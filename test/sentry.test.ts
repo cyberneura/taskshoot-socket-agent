@@ -604,6 +604,37 @@ test("an AbortError rejection still kills the process", () => {
   );
 });
 
+test("a fatal error during a signal shutdown leaves the exit to the shutdown", () => {
+  // `shutdown.ts` runs its `force` cleanup (SIGKILL for hermes groups that
+  // ignored `stop`) when its grace period ends, immediately before exiting
+  // 130/143. A fatal error inside that period must not exit first: doing so
+  // cancels the timer and the cleanup with it. Without reporting the process
+  // dies on the spot and the cleanup is lost either way; with a handler in
+  // place there is no reason to keep that.
+  const result = runChild(
+    `const { onShutdown } = await import("./src/shutdown.js");` +
+      `onShutdown((phase) => console.log("PHASE:" + phase));` +
+      `process.kill(process.pid, "SIGTERM");` +
+      `setTimeout(() => Promise.reject(new Error("floating")), 100);` +
+      `setTimeout(() => { console.log("SURVIVED"); process.exit(7); }, 6000);`,
+    true,
+  );
+
+  assert.equal(result.error, undefined);
+  assert.ok(result.stdout.includes("SENTRY_READY"), result.stderr);
+  assert.ok(result.stdout.includes("PHASE:stop"), `the signal was not handled: ${result.stdout}`);
+  assert.ok(
+    result.stderr.includes("floating"),
+    `the fatal error did not happen: ${result.stderr.slice(-300)}`,
+  );
+  assert.ok(
+    result.stdout.includes("PHASE:force"),
+    `the force cleanup must still run: ${result.stdout}${result.stderr}`,
+  );
+  assert.equal(result.status, 143, "the signal shutdown must own the exit code");
+  assert.ok(!result.stdout.includes("SURVIVED"));
+});
+
 test("a burst of rejections still exits, with the same code", () => {
   // Note what this does *not* cover: the handler's re-entrancy guard is not
   // observable from outside. Without it every rejection starts its own flush,

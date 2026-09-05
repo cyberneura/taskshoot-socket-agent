@@ -19,7 +19,7 @@
 import { randomUUID } from "node:crypto";
 
 import { config } from "./config.js";
-import { closeIntake } from "./shutdown.js";
+import { closeIntake, isShuttingDown } from "./shutdown.js";
 
 type SentryModule = typeof import("@sentry/node");
 
@@ -320,16 +320,25 @@ function reportFatalAndExit(where: string, error: unknown): void {
   // way — so the tests do not cover this directly.)
   if (exitingFatally) return;
   exitingFatally = true;
+  // Read before closing the intake, which sets the same flag.
+  const shutdownAlreadyRunning = isShuttingDown();
   // Before the flush: the process stays alive while it runs, and nothing new
   // may start in a process that is going down.
   closeIntake();
   captureError(where, error, undefined, { fatal: true });
-  // If a signal-driven shutdown is already running (`shutdown.ts` exits with
-  // 130/143 after its grace period), its timer and this flush race, and
-  // whichever fires first sets the exit code. A signal arriving *after* this
-  // point is ignored by `shutdown.ts` — the intake is already closed — and the
-  // exit below still happens. Every code involved is non-zero, so the
-  // supervisor restarts either way.
+  if (shutdownAlreadyRunning) {
+    // A signal-driven shutdown is in progress: `shutdown.ts` has sent its
+    // `stop` phase and will run `force` (which SIGKILLs hermes groups that
+    // ignored `stop`) and exit 130/143 when its grace period ends. Exiting
+    // here first would cancel that timer and leave those groups running —
+    // the one thing the signal path exists to prevent. So report, flush, and
+    // let the shutdown own the exit; the grace period is longer than the
+    // flush, so the report still gets out.
+    void flushSentry();
+    return;
+  }
+  // A signal arriving *after* this point is ignored by `shutdown.ts` — the
+  // intake is already closed — and the exit below still happens.
   void flushSentry().finally(() => process.exit(1));
 }
 
