@@ -118,6 +118,19 @@ export async function initSentry(
   if (!dsn) return;
   try {
     const sdk = await import("@sentry/node");
+    const otel = await import("@opentelemetry/api");
+    // Whether the host already has a global propagator (an OpenTelemetry
+    // preloader, say). OpenTelemetry refuses a second registration, so in
+    // that case `init` below cannot install Sentry's and there is nothing of
+    // Sentry's to remove — while removing what is there would take the host's
+    // own trace propagation down process-wide. The API keeps its registry
+    // under this symbol (its own `GLOBAL_OPENTELEMETRY_API_KEY`, keyed by the
+    // API's major version); there is no public getter.
+    const hadPropagator = Boolean(
+      (globalThis as Record<symbol, { propagation?: unknown } | undefined>)[
+        Symbol.for("opentelemetry.js.api.1")
+      ]?.propagation,
+    );
     sdk.init({
       dsn,
       // Empty means "let the SDK decide" (`production`, unless the process has
@@ -203,8 +216,7 @@ export async function initSentry(
     // cycles forever, whether or not Sentry accepts the reports (measured
     // with a local server answering 200: a process that would exit on its
     // own no longer does).
-    const otel = await import("@opentelemetry/api");
-    otel.propagation.disable();
+    if (!hadPropagator) otel.propagation.disable();
     // With `SENTRY_USE_ENVIRONMENT` set on the host, `init` copies
     // `SENTRY_TRACE` and `SENTRY_BAGGAGE` from the environment into the
     // scope every later capture forks from, and from there every `sentry-*`

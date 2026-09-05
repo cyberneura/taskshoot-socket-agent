@@ -470,6 +470,32 @@ test("SENTRY_TRACE and SENTRY_BAGGAGE in the environment do not reach an envelop
   );
 });
 
+test("a propagator the host registered before init is left alone", () => {
+  // OpenTelemetry refuses a second global registration, so when the host
+  // already has a propagator Sentry's never goes in — and the removal must
+  // then not happen either, or enabling reporting would take the host's own
+  // trace propagation down process-wide. The propagator is registered before
+  // `initSentry`, so this cannot use the shared prelude.
+  const result = runChild(
+    `const otel = await import("@opentelemetry/api");` +
+      `otel.propagation.setGlobalPropagator({ inject: (c, carrier) => { carrier["x-host"] = "1"; }, extract: (c) => c, fields: () => ["x-host"] });` +
+      `const { initSentry } = await import("./src/sentry.js");` +
+      `await initSentry(${JSON.stringify(TEST_DSN)}, "test");` +
+      `const sdk = await import("@sentry/node");` +
+      `if (sdk.getClient()?.getTransport()) console.log("SENTRY_READY");` +
+      `const carrier = {}; otel.propagation.inject(otel.context.active(), carrier);` +
+      `console.log("KEYS:" + JSON.stringify(Object.keys(carrier)));`,
+    false,
+  );
+
+  assert.equal(result.error, undefined);
+  assert.ok(result.stdout.includes("SENTRY_READY"), result.stderr);
+  assert.ok(
+    result.stdout.includes('KEYS:["x-host"]'),
+    `the host's propagator must survive: ${result.stdout}${result.stderr}`,
+  );
+});
+
 test("SENTRY_SPOTLIGHT in the environment does not add a destination", () => {
   // `init` honours that variable after the integration filter has run, so
   // the filter cannot catch it; only the `spotlight: false` option can. The

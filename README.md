@@ -222,7 +222,9 @@ that would copy such data in are closed:
   filter has run and post every event to a local sidecar as well. The DSN is
   the only destination.
 - The global OpenTelemetry propagator that `init` registers is disabled
-  again right after. The Agent SDK asks that propagator for headers when it
+  again right after — unless the host had registered one before, in which
+  case Sentry's never went in (OpenTelemetry refuses a second registration)
+  and the host's is left alone. The Agent SDK asks that propagator for headers when it
   spawns `claude` and copies them into the child's environment: `SENTRY-TRACE`
   and `BAGGAGE`, the latter carrying the DSN's public key (measured). With
   propagation disabled the child's environment is what it is without
