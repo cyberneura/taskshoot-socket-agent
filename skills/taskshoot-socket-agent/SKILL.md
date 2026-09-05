@@ -36,7 +36,7 @@ Two more behaviours that look like bugs and are not:
 
 ## Requirements
 
-- Node.js >= 20.
+- Node.js >= 20.6.
 - The `taskshoot` CLI >= 0.7.0 on PATH, authenticated **as the bot user with a
   write API key**. The daemon never handles Taskshoot credentials itself: every
   call shells out to that CLI, which resolves its own credentials.
@@ -76,8 +76,8 @@ and connects immediately). Every other invocation starts the daemon.
 
 From a source checkout: `pnpm install` (its `prepare` script builds) then
 `node dist/main.js`. `bin/start.sh` is the supervised entry point for a
-checkout — it sets up PATH, reads an optional `.env`, installs/builds when
-needed and execs the daemon. A global install uses none of that; configure it
+checkout — it sets up PATH, reads an optional `.env`, installs and builds on
+every start and execs the daemon. A global install uses none of that; configure it
 through the supervisor's environment. The repository carries templates for
 supervisor (Ubuntu) and launchd (macOS) under `deploy/`.
 
@@ -100,6 +100,8 @@ consumes.
 | `TSSA_STATE_DIR` | `~/.local/state/taskshoot-socket-agent` | Session ids + handled-notification ledger + the pid lock |
 | `TSSA_TASKSHOOT_BIN` | `taskshoot` | The CLI binary |
 | `TSSA_EXTRA_SYSTEM_PROMPT` | (empty) | Site policy appended to the agent's operating policy |
+| `TSSA_SENTRY_DSN` | (empty) | Sentry DSN. Empty disables error reporting entirely; never commit one |
+| `TSSA_SENTRY_ENVIRONMENT` | (SDK default) | Sentry `environment`, for grouping deployments (the host is already in `server_name`) |
 | `TSSA_EXTRA_PATH` | (empty) | Prepended to PATH — read by `bin/start.sh`, not by the daemon |
 
 Notes that are easy to get wrong:

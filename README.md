@@ -41,7 +41,7 @@ taskshoot listen (WebSocket, JSON Lines)
 
 ## Requirements
 
-- Node.js >= 20 (pnpm only for a source checkout)
+- Node.js >= 20.6 (the Sentry dependency tree pulls in OpenTelemetry packages that require it; pnpm only for a source checkout)
 - The [`taskshoot` CLI](https://github.com/cyberneura/taskshoot-cli) >= 0.7.0
   on PATH, authenticated as the bot user (a **write** API key; see
   `taskshoot config init`)
@@ -85,7 +85,7 @@ node dist/main.js        # or: pnpm run dev
 ```
 
 `bin/start.sh` is the supervised entry point for a checkout: it sets up PATH,
-reads an optional `.env`, installs/builds when needed and execs the daemon.
+reads an optional `.env`, installs and builds on every start, and execs the daemon.
 A global install uses neither — configure it through the supervisor's own
 environment. Deployment templates (both variants):
 
@@ -106,6 +106,8 @@ environment. Deployment templates (both variants):
 | `TSSA_STATE_DIR` | `~/.local/state/taskshoot-socket-agent` | Session ids + handled-notification ledger |
 | `TSSA_TASKSHOOT_BIN` | `taskshoot` | The CLI binary |
 | `TSSA_EXTRA_SYSTEM_PROMPT` | (empty) | Site policy appended to the agent's operating policy |
+| `TSSA_SENTRY_DSN` | (empty) | Sentry DSN. Empty disables error reporting entirely |
+| `TSSA_SENTRY_ENVIRONMENT` | (SDK default) | Sentry `environment`. The host is already identifiable from `server_name`, so this is for grouping deployments, not hosts |
 | `TSSA_EXTRA_PATH` | (empty) | Prepended to PATH by `bin/start.sh` |
 
 ## Design notes
@@ -127,6 +129,269 @@ environment. Deployment templates (both variants):
   agent posting its comment and the ledger being saved, the mention is
   retried; the system prompt tells the agent to read the thread and never
   repeat a reply it already posted, which is mitigation, not a guarantee.
+
+## Error reporting (optional)
+
+Set `TSSA_SENTRY_DSN` to report failures to Sentry. With no DSN nothing is
+loaded and every reporting call is a no-op, so this changes nothing for
+deployments that do not want it.
+
+**Pass the DSN through the environment.** This repository is public; a DSN must
+never be committed to it. Use whatever the host already has for secrets — a
+Kubernetes Secret, a `.env` read by `bin/start.sh`, and so on.
+
+### What is reported
+
+- A failure that reaches `main().catch` and stops the daemon. Events are
+  flushed before the process exits, since `captureException` is asynchronous.
+- Uncaught exceptions, via a replacement handler of ours — see below.
+- Unhandled rejections, via a replacement handler of ours — the SDK's cannot be
+  used here, see below.
+
+All three are filed the way the SDK's own crash handlers would file them:
+level `fatal`, `handled: false`. Sentry filters on both, and a report whose next
+line is `process.exit` is not a handled error. (For an error with a `cause`
+chain the SDK puts that flag on the innermost cause rather than on the error
+itself; nothing on the fatal paths today uses `cause`.)
+
+### What a report contains
+
+The error's own text, cut at 250 characters (`maxValueLength`, set
+explicitly — the Node SDK sends it whole by default): its message, the
+messages of its `cause` chain, and for a rejection that is not an `Error`, the
+string, or for an object its `message`/`name`, or failing those its list of
+keys — and an `Error` sitting in any property of that object is adopted as the
+exception outright. The cut applies to the message only: the error's `name`
+goes whole, and the SDK parses stack frames out of the *entire* text, so a
+line shaped like `at f (/p:1:1)` anywhere in a message — past the cut
+included — arrives as a frame with that function name and path (measured).
+That is what reporting an error *is*, and it is also the
+limit of what can be promised: an error that quotes its input puts the start
+of that input in Sentry (`JSON.parse` does when the input does not begin as
+JSON; a failed `execFile` appends the child's stderr). The errors that reach
+the fatal paths today — the state file, the lock, `whoami`, hermes preflight,
+and the first-run backlog seeding (`listUnreadNotifications`, `markReadIds`)
+— carry no task text or credential in their messages, and the `taskshoot` CLI
+does not print its key. The ones that come closest are `whoami` and the
+seeding, which both parse the CLI's JSON: if the CLI answered with something
+else, the first 250 characters of the message would quote the start of it.
+Each report also carries the stack, with the absolute path of the checkout
+(which includes the login name of the account the daemon runs as), plus the
+SDK's runtime, OS, app, device and culture contexts (Node version, platform,
+process start time, CPU and memory figures, boot time, locale, timezone) and,
+where a cloud provider's environment variables exist, the provider's name and
+what those variables carry (region on most; platform too on AWS; region,
+account id and availability zone on Tencent Cloud). `server_name` is the
+hostname, or `SENTRY_NAME` if the host sets that.
+
+Reports do **not** carry anything the error did not itself say. The SDK paths
+that would copy such data in are closed:
+
+- `Console`, which turns every `console.*` call into a breadcrumb, is
+  disabled. This daemon logs task titles and the agent's replies, and enabling
+  error reporting should not quietly ship private task content to a third
+  party.
+- `LocalVariablesAsync` is disabled. It is inert unless `includeLocalVariables`
+  is set, and dropping it means turning that option on later cannot start
+  shipping the values of locals, which here hold credentials.
+- `NodeSystemError`, which copies a system error's own properties into a
+  context — for a failed `spawn`, its arguments, and the hermes backend passes
+  the prompt as one — is disabled. It also used to strip the failing path from
+  the message; without it a filesystem error names its file (in practice the
+  state directory under the daemon's home).
+- A plain object captured as an exception is serialised whole into
+  `extra.__serialized__`; `beforeSend` strips that. Its `message` and `name`
+  still become the exception text, like any error's.
+- `Modules`, which copies the dependency map of the working directory's
+  package.json into every event, is disabled. Here that would be this
+  repository's, but a dependency spec can be a git URL carrying a credential,
+  and the versions are in the lockfile anyway.
+- `ProcessSession` is disabled. Once a release is known — and the SDK infers
+  one from CI-style environment variables — it sends a release-health session
+  as its own envelope with the first error, or at `beforeExit` if none
+  happened. On such a host the process would report more than the error.
+- `ContextLines` is disabled. It attaches the source lines around each stack
+  frame by reading the file the frame names, and the SDK parses frames out of
+  the error *text* — so a message containing a line shaped like
+  `at x (/etc/passwd:1:1)` gets that file read and shipped (measured). Error
+  messages here quote CLI output and child stderr, which is not text to trust
+  with a file read. The frame's path still appears; the file's content does
+  not.
+- `SENTRY_SPOTLIGHT` in the environment is ignored (`spotlight: false`).
+  Otherwise `init` would add a `Spotlight` integration after the integration
+  filter has run and post every event to a local sidecar as well. The DSN is
+  the only destination.
+- The global OpenTelemetry propagator that `init` registers is disabled
+  again right after — unless the host had registered one before, in which
+  case Sentry's never went in (OpenTelemetry refuses a second registration)
+  and the host's is left alone. The Agent SDK asks that propagator for headers when it
+  spawns `claude` and copies them into the child's environment: `SENTRY-TRACE`
+  and `BAGGAGE`, the latter carrying the DSN's public key (measured). With
+  propagation disabled the child's environment is what it is without
+  reporting; events, the integration set, the outgoing `Http`/`NodeFetch`
+  headers and incoming trace continuation (which `@sentry/core` builds from
+  the request headers itself) are all unchanged (measured). (Not done with
+  `skipOpenTelemetrySetup`: without the context manager the SDK records a
+  dropped-span outcome for every transport request — the client report that
+  flushes outcomes included — so each `beforeExit` flush produces the next
+  outcome and a process that would exit on its own cycles forever, whether or
+  not Sentry accepts the reports; measured with a local server answering 200.)
+- `SENTRY_TRACE` / `SENTRY_BAGGAGE` are not carried. With
+  `SENTRY_USE_ENVIRONMENT` set on the host, `init` copies both into the scope
+  every later capture forks from, and each `sentry-*` baggage entry then
+  lands in every envelope's `trace` header — from the fatal handlers too
+  (measured). Unset, nothing is read; the propagation context is replaced
+  with a fresh one after `init` regardless, and a test runs with the variable
+  set and checks that a planted entry never leaves.
+
+The SDK reads a few other variables on its own, none of which adds a
+destination or data from the error's surroundings: `https_proxy` /
+`http_proxy` / `no_proxy` (the transport goes through the proxy; `http_proxy`
+is the fallback even for an https DSN), `SENTRY_ENVIRONMENT` (the event's
+`environment` when `TSSA_SENTRY_ENVIRONMENT` is empty), `SENTRY_NAME`
+(replaces the hostname in `server_name`), `SENTRY_RELEASE` and CI commit
+variables such as `CI_COMMIT_SHA` (become the event's `release`),
+`SENTRY_DEBUG` (SDK logging on the console — mostly stdout), and `VERCEL`
+(adds a `SIGTERM` listener that flushes for 200 ms — the
+one process listener the SDK adds conditionally, on a platform this daemon
+does not run on).
+
+A test plants a value on the `spawn` and plain-object paths and checks that
+only the `message` leaves.
+
+### Enabling reporting does not change how the daemon behaves
+
+Four SDK defaults would change it, and reporting itself adds a fifth
+difference. All five are pinned in `src/sentry.ts`. Each was checked by running
+the daemon's failure modes with and without a DSN, not only by reading the
+code, and each has a test that fails if the pinning is removed. (`init` also
+adds two `beforeExit` listeners. They are not counted: this process never
+reaches `beforeExit` — the poll interval and the listener child keep the loop
+busy, and every exit path calls `process.exit`.)
+
+- **`onUncaughtException` reports and exits, but never closes the intake** —
+  and it is the SDK's handler, so nothing of ours runs first. Replaced by our
+  own, symmetric with the rejection handler below. Note the trap: adding a
+  listener *without* suppressing the SDK's integration is worse than leaving it
+  alone, because it only exits when no other listener is registered — one extra
+  listener and the process stops dying at all (measured).
+- **`onUnhandledRejection` does not restore Node's behaviour, in any mode.**
+  Its default `warn` only logs; `strict` exits but still skips a
+  non-removable ignore list (`AbortError`, `AI_NoOutputGeneratedError`). Either
+  way the listener is registered, which suppresses Node's own "die on an
+  unhandled rejection" — so with a DSN an unhandled `AbortError` would survive
+  where it used to be fatal. (The daemon's own abort path — shutdown aborts the
+  Agent SDK's controllers in `backends/claude.ts` — is caught in `handle()`;
+  the exposure is a promise the Agent SDK leaves floating on abort.) The
+  integration is dropped and replaced with a handler that reports, flushes,
+  and exits.
+- **`ChildProcess` attaches an `error` listener to every child process.**
+  `startListener` deliberately has none: a `taskshoot listen` that fails to
+  spawn should crash the daemon so the supervisor restarts it. With the
+  listener attached the crash disappears — and a failed spawn emits no `exit`,
+  so the reconnect scheduler never runs either. The WebSocket path would stay
+  dead while the daemon looked healthy. Dropped.
+- **`registerEsmLoaderHooks` defaults to on.** `init` registers an
+  `import-in-the-middle` loader hook whether or not tracing is enabled, so
+  every later dynamic import goes through a hook chain and the process gains a
+  worker thread. The Agent SDK imports at runtime, so this is in the daemon's
+  path. Set to `false`; the integration set is unchanged (measured).
+- **Dying stops being instant.** Reporting a fatal error means flushing it,
+  and the event loop keeps turning while that happens — long enough for
+  `drain()` to start a run the dying process will never record. The flush is
+  bounded to 500 ms in total (the SDK's own `flush` can take twice its
+  argument, so the bound is enforced around it), and both fatal handlers close
+  the intake (`closeIntake()`) before flushing, so nothing new starts during
+  it. Measured: a fatal error with an unresponsive DSN host lets ~400 ms of
+  timers run, against 0 with reporting off — with `isShuttingDown()` already
+  true throughout.
+
+One option is pinned to a value that looks odd. **`tracesSampleRate` is
+`null` — not `0`, and not left out.** Sentry tests `!= null`, so `0` counts as
+enabled and adds 27 auto-performance integrations (17 becomes 44, measured),
+each patching some module when it loads. None of them reaches the agent today
+(`Anthropic_AI`, for instance, targets `@anthropic-ai/sdk`, which the Agent
+SDK bundles rather than imports, and the model calls happen in the `claude`
+child process), but 27 patches that happen to miss is not a state to depend
+on. Leaving the option out is not safe either: the SDK then reads
+`SENTRY_TRACES_SAMPLE_RATE` from the environment, and a host with that set
+would send a transaction for every span created here. `null` is passed
+through as-is and fails the `!= null` test, so tracing stays off whatever the
+host sets; a test starts a span under that variable and checks that nothing
+leaves. (`Http` and
+`NodeFetch` are ordinary defaults and stay either way. They are not inert:
+both add `sentry-trace` and `baggage` headers to outgoing requests — `http`
+and `fetch` respectively — and `Http` instruments incoming ones. This daemon
+makes no in-process HTTP calls —
+`taskshoot` and the agent are separate processes — so today that has no
+effect, but it would if in-process HTTP were added.)
+
+The daemon ends up with 8 of the 17 default integrations; the exact set is
+asserted in the tests, so an SDK rename or addition fails there rather than
+quietly changing what runs. This repository has no CI, so "fails there" means
+at the next `pnpm test` — run it after bumping the SDK. For the same reason
+`@sentry/node` is pinned to an exact version rather than a range: the
+integration filter is a list of names checked against one audited default
+set, and a global install from git does not use the lockfile, so a range
+would let a later minor release bring an integration in without the test
+ever running. Bump it on purpose, with the tests.
+
+#### Three differences left in place, deliberately
+
+Each is either bounded by the 500 ms reporting window or needs a host
+configuration nothing here produces, and closing it would cost more than it
+is worth.
+
+- **A fatal error during a signal-driven shutdown no longer kills the
+  process on the spot.** Without reporting it does, and the shutdown's
+  `force` cleanup (SIGKILL for hermes groups that ignored `stop`) is lost with
+  it. With a handler in place the report is sent and the shutdown is left to
+  own the exit: `force` runs and the process exits 130/143 when the grace
+  period ends, up to two seconds later than it would have died. Keeping the
+  instant death would have meant keeping the lost cleanup, which is the one
+  thing the signal path exists to guarantee. (A signal arriving *after* a
+  fatal report has closed the intake is ignored, and that exit still happens.)
+- **An in-flight run gets up to 500 ms longer.** The fatal path closes the
+  intake but does not run the cleanup the signal path runs. What happens to a
+  run already executing then depends on the backend. A hermes run is a
+  detached process group that outlives the daemon either way. A Claude run is
+  a child the Agent SDK kills with `SIGTERM` from its own `process.on("exit")`
+  handler — immediately without reporting, and after the flush with it. So
+  with a DSN the run continues for up to 500 ms more before the same signal
+  arrives. Running the cleanup here would close that gap for Claude but would
+  also kill hermes groups that survive without reporting, which is a bigger
+  divergence than the one it fixes.
+- **`--unhandled-rejections=warn` is overridden.** A host that starts Node that
+  way has chosen not to die on a rejection; the replacement handler exits
+  regardless. Detecting the mode means parsing `execArgv` and `NODE_OPTIONS`
+  and guessing what Node would have done, which is more likely to be wrong than
+  the thing it fixes. Nothing in this repository starts Node that way.
+
+**Failures inside `handle()` and `poll()` are deliberately not reported yet.**
+Both swallow their errors so the polling backstop can retry, and the backstop
+retries the *same* notification until it succeeds or ages out — reporting each
+attempt would turn one stuck task into a stream of identical events. Adding
+them needs a suppression rule (report from the Nth attempt, say), and that
+threshold should be chosen against real traffic rather than guessed.
+
+**A bad environment variable is not reported either.** `config.ts` validates
+`TSSA_*` values while it is being imported, which happens before `main()` runs
+and therefore before reporting is initialised — so the likeliest startup
+failure of all (a typo in a supervisor unit or `.env`) exits with a message on
+stderr and nothing in Sentry.
+
+So: **a quiet Sentry project does not mean the daemon is healthy.** It does not
+even mean it has not died at startup — initialisation failures, capture
+failures and a flush that times out are all swallowed rather than reported, on
+the principle that reporting must never be what stops the daemon. The log files
+remain the place to look.
+
+### Grouping
+
+`captureError(where, ...)` tags the event with `where` and adds it to the
+fingerprint alongside Sentry's own grouping, so the same error raised from
+different places stays separate. This narrows grouping; it does not collapse a
+call site into a single issue.
 
 ## Security model — read before deploying
 

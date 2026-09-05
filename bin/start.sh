@@ -25,8 +25,24 @@ command -v "${TSSA_TASKSHOOT_BIN:-taskshoot}" >/dev/null || {
 }
 command -v node >/dev/null || { echo "node is not on PATH" >&2; exit 1; }
 
-if [ ! -d node_modules ]; then
+# Always, not just when node_modules is missing. A host that only `git pull`s
+# would otherwise keep a stale tree, and the `tsc` below fails outright on a
+# newly added dependency (TS2307) — `set -e` then stops the daemon from
+# starting at all.
+#
+# This does cost a second start-up build: `pnpm install` runs the package's own
+# `prepare` script, which is also `tsc`. Left as is because the explicit build
+# below is the one that is guaranteed to run (see the note on pnpm 11 there).
+if command -v pnpm >/dev/null; then
   pnpm install --frozen-lockfile
+elif [ ! -d node_modules ]; then
+  echo "pnpm is not on PATH and node_modules is missing" >&2
+  exit 1
+else
+  # Do not turn "pnpm is missing" into a new reason to fail: a host that was
+  # already running with a populated node_modules keeps working. If the tree is
+  # actually stale the build below says so.
+  echo "pnpm is not on PATH; skipping install (dependencies may be stale)" >&2
 fi
 # tsc is invoked directly instead of `pnpm run build`: pnpm 11 runs a
 # dependency status check before `run` scripts and aborts on hosts where the

@@ -44,6 +44,19 @@ export function isShuttingDown(): boolean {
 }
 
 /**
+ * Close the intake without going through the signal path.
+ *
+ * For the fatal error handlers: they report and flush before exiting, which
+ * takes long enough for `drain()` to dequeue the next mention and start a run
+ * that the dying process will never record. Closing the intake first keeps the
+ * guarantee the signal path already makes — from the moment we know we are
+ * going down, nothing new starts.
+ */
+export function closeIntake(): void {
+  shuttingDown = true;
+}
+
+/**
  * Registers cleanup to run when the daemon is stopping (terminating child
  * process groups, etc.). Installs the signal handlers on first use.
  */
