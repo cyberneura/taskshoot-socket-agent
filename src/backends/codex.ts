@@ -62,7 +62,7 @@
  * survives could still post a comment after the run was rejected.
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { config } from "../config.js";
@@ -84,6 +84,10 @@ async function prepareWorkdir(systemPromptAppend: string): Promise<string> {
   const staged = path.join(dir, `.AGENTS.md.${randomUUID()}`);
   await writeFile(staged, `${AGENTS_FILE_HEADER}\n\n${systemPromptAppend}\n`, { flag: "wx" });
   await rename(staged, path.join(dir, "AGENTS.md"));
+  // Codex reads `AGENTS.override.md` in preference to `AGENTS.md`. A run could
+  // plant one to replace the policy for every later mention, so none survives
+  // into the next run.
+  await rm(path.join(dir, "AGENTS.override.md"), { recursive: true, force: true });
   return dir;
 }
 
@@ -116,7 +120,8 @@ interface ParsedEvents {
 }
 
 /**
- * Reads the JSON Lines Codex printed. Lines that are not JSON are skipped
+ * Reads the JSON Lines Codex printed (the middle of a very long stream may
+ * have been dropped — see `appendBounded`). Lines that are not JSON are skipped
  * rather than treated as fatal: the stream is the run's only record of the
  * session id, and losing it over one stray line would cost the conversation.
  */

@@ -41,6 +41,26 @@ export interface ChildError extends Error, ChildOutput {
   spawned: boolean;
 }
 
+/** What is kept of a stream once it outgrows the bound: its start and its end. */
+const OUTPUT_HEAD_CHARS = 64 * 1024;
+const OUTPUT_TAIL_CHARS = 1024 * 1024;
+
+/**
+ * Appends to a captured stream without letting it grow without limit.
+ *
+ * The daemon is long-lived and an agent's output is not under its control: an
+ * event stream that echoes every tool's output can reach any size, and a
+ * mention can be written to make it. What the backends read is at the two
+ * ends — the session id first, the outcome and the answer last — so the middle
+ * is what gets dropped. The cut is marked with a newline so the line it lands
+ * in does not merge with the one before it.
+ */
+export function appendBounded(current: string, chunk: string): string {
+  const next = current + chunk;
+  if (next.length <= OUTPUT_HEAD_CHARS + OUTPUT_TAIL_CHARS) return next;
+  return `${next.slice(0, OUTPUT_HEAD_CHARS)}\n${next.slice(-(OUTPUT_TAIL_CHARS - 1))}`;
+}
+
 function childError(error: unknown, spawned: boolean, stdout: string, stderr: string): ChildError {
   const wrapped = (error instanceof Error ? error : new Error(String(error))) as ChildError;
   wrapped.spawned = spawned;
@@ -276,10 +296,10 @@ export async function runChild(
     };
 
     child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
+      stdout = appendBounded(stdout, chunk.toString());
     });
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      stderr = appendBounded(stderr, chunk.toString());
     });
 
     child.on("spawn", () => {
