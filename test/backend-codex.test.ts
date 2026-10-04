@@ -8,7 +8,17 @@
  * and the fake binary switches behaviour through FAKE_CODEX_MODE instead.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -109,6 +119,27 @@ test("starts a session, takes its id from thread.started, and writes the policy 
   assert.match(policy, /POLICY BODY/);
   // realpath on both sides: macOS resolves /var to /private/var for the child.
   assert.equal(await realpath(recorded.cwd), await realpath(workdir));
+});
+
+test("a policy file the agent turned into a link is replaced, not written through", async () => {
+  // Arrange
+  // The sandboxed agent can write in its run directory. If it leaves
+  // AGENTS.md as a link to a file outside, an in-place write by this
+  // unsandboxed process would overwrite that file.
+  process.env.FAKE_CODEX_MODE = "ok";
+  const victim = path.join(dir, "victim.txt");
+  await writeFile(victim, "untouched");
+  await mkdir(workdir, { recursive: true });
+  await rm(path.join(workdir, "AGENTS.md"), { force: true });
+  await symlink(victim, path.join(workdir, "AGENTS.md"));
+
+  // Act
+  await runCodex("p", { systemPromptAppend: "NEW POLICY" });
+
+  // Assert
+  assert.equal(await readFile(victim, "utf8"), "untouched");
+  assert.ok((await lstat(path.join(workdir, "AGENTS.md"))).isFile(), "the link itself is replaced");
+  assert.match(await readFile(path.join(workdir, "AGENTS.md"), "utf8"), /NEW POLICY/);
 });
 
 test("sandboxes writes by default but leaves the network open for the taskshoot CLI", async () => {
