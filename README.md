@@ -8,8 +8,10 @@ agent per mention; the agent reads the task thread and posts its reply with
 
 The agent backend is pluggable (`TSSA_AGENT_BACKEND`):
 [Claude Agent SDK](https://docs.anthropic.com/en/docs/claude-code/sdk) in-process
-(`claude`, the default) or the [Hermes Agent](https://github.com/NousResearch/hermes-agent)
-CLI (`hermes`), for hosts whose main job is browser / desktop work.
+(`claude`, the default), the [Hermes Agent](https://github.com/NousResearch/hermes-agent)
+CLI (`hermes`), for hosts whose main job is browser / desktop work, or the
+[Codex CLI](https://github.com/openai/codex) (`codex`), for hosts that already
+run Codex on a ChatGPT subscription.
 
 ```
 taskshoot listen (WebSocket, JSON Lines)
@@ -49,9 +51,10 @@ taskshoot listen (WebSocket, JSON Lines)
   authenticated:
   - `claude` (default) — Claude Code
   - `hermes` — the Hermes CLI
+  - `codex` — the Codex CLI (`codex login status` must report a login)
 
-  The daemon checks the `hermes` binary at startup and refuses to start when it
-  is missing, because otherwise every mention would fail at spawn and stay
+  The daemon checks the `hermes` / `codex` binary at startup and refuses to
+  start when it is missing, because otherwise every mention would fail at spawn and stay
   unread while the backstop retries it.
 
 ## Installing
@@ -98,11 +101,15 @@ environment. Deployment templates (both variants):
 |---|---|---|
 | `TSSA_NOTIFICATION_TYPES` | `task_mentioned` | Notification types to subscribe to (comma-separated) |
 | `TSSA_POLL_MINUTES` | `30` | Polling backstop interval |
-| `TSSA_AGENT_BACKEND` | `claude` | Which agent runs a mention: `claude` (Agent SDK, in-process) or `hermes` (Hermes CLI) |
+| `TSSA_AGENT_BACKEND` | `claude` | Which agent runs a mention: `claude` (Agent SDK, in-process), `hermes` (Hermes CLI) or `codex` (Codex CLI) |
 | `TSSA_AGENT_TIMEOUT_MINUTES` | `20` | Hard timeout for one agent run |
 | `TSSA_AGENT_CWD` | `~/workspace` | Working directory for the agent (backend `claude` only) |
 | `TSSA_HERMES_BIN` | `hermes` | The Hermes CLI binary (backend `hermes`) |
 | `TSSA_HERMES_WORKDIR` | `<state dir>/hermes-workspace` | Run directory for backend `hermes`; it owns the `AGENTS.md` there |
+| `TSSA_CODEX_BIN` | `codex` | The Codex CLI binary (backend `codex`) |
+| `TSSA_CODEX_WORKDIR` | `<state dir>/codex-workspace` | Run directory for backend `codex`; it owns the `AGENTS.md` there |
+| `TSSA_CODEX_SANDBOX` | `workspace-write` | Sandbox for backend `codex`: `read-only`, `workspace-write` (network left open for the `taskshoot` CLI) or `danger-full-access` (no sandbox) |
+| `TSSA_CODEX_MODEL` | (codex config) | Model for backend `codex`. Empty leaves it to `~/.codex/config.toml` |
 | `TSSA_STATE_DIR` | `~/.local/state/taskshoot-socket-agent` | Session ids + handled-notification ledger |
 | `TSSA_TASKSHOOT_BIN` | `taskshoot` | The CLI binary |
 | `TSSA_EXTRA_SYSTEM_PROMPT` | (empty) | Site policy appended to the agent's operating policy |
@@ -169,7 +176,7 @@ That is what reporting an error *is*, and it is also the
 limit of what can be promised: an error that quotes its input puts the start
 of that input in Sentry (`JSON.parse` does when the input does not begin as
 JSON; a failed `execFile` appends the child's stderr). The errors that reach
-the fatal paths today — the state file, the lock, `whoami`, hermes preflight,
+the fatal paths today — the state file, the lock, `whoami`, the hermes / codex preflight,
 and the first-run backlog seeding (`listUnreadNotifications`, `markReadIds`)
 — carry no task text or credential in their messages, and the `taskshoot` CLI
 does not print its key. The ones that come closest are `whoami` and the
@@ -195,8 +202,8 @@ that would copy such data in are closed:
   is set, and dropping it means turning that option on later cannot start
   shipping the values of locals, which here hold credentials.
 - `NodeSystemError`, which copies a system error's own properties into a
-  context — for a failed `spawn`, its arguments, and the hermes backend passes
-  the prompt as one — is disabled. It also used to strip the failing path from
+  context — for a failed `spawn`, its arguments, and the hermes and codex backends
+  pass the prompt as one — is disabled. It also used to strip the failing path from
   the message; without it a filesystem error names its file (in practice the
   state directory under the daemon's home).
 - A plain object captured as an exception is serialised whole into
@@ -344,7 +351,7 @@ is worth.
 
 - **A fatal error during a signal-driven shutdown no longer kills the
   process on the spot.** Without reporting it does, and the shutdown's
-  `force` cleanup (SIGKILL for hermes groups that ignored `stop`) is lost with
+  `force` cleanup (SIGKILL for hermes / codex groups that ignored `stop`) is lost with
   it. With a handler in place the report is sent and the shutdown is left to
   own the exit: `force` runs and the process exits 130/143 when the grace
   period ends, up to two seconds later than it would have died. Keeping the
@@ -353,13 +360,13 @@ is worth.
   fatal report has closed the intake is ignored, and that exit still happens.)
 - **An in-flight run gets up to 500 ms longer.** The fatal path closes the
   intake but does not run the cleanup the signal path runs. What happens to a
-  run already executing then depends on the backend. A hermes run is a
+  run already executing then depends on the backend. A hermes or codex run is a
   detached process group that outlives the daemon either way. A Claude run is
   a child the Agent SDK kills with `SIGTERM` from its own `process.on("exit")`
   handler — immediately without reporting, and after the flush with it. So
   with a DSN the run continues for up to 500 ms more before the same signal
   arrives. Running the cleanup here would close that gap for Claude but would
-  also kill hermes groups that survive without reporting, which is a bigger
+  also kill hermes / codex groups that survive without reporting, which is a bigger
   divergence than the one it fixes.
 - **`--unhandled-rejections=warn` is overridden.** A host that starts Node that
   way has chosen not to die on a rejection; the replacement handler exits
@@ -403,12 +410,13 @@ guidance the model follows, not enforcement.
 
 What enforcement exists depends on the backend:
 
-| | `claude` | `hermes` |
-|---|---|---|
-| How tools are approved | `bypassPermissions` | `--yolo` |
-| Deny lists | the host's Claude settings (`user`, `project` and `local` are all loaded) still apply | **none — Hermes has no equivalent** |
-| Policy delivery | system prompt | `AGENTS.md` in the run directory |
-| Remaining enforcement | deny lists + host isolation | **host isolation only** |
+| | `claude` | `hermes` | `codex` |
+|---|---|---|---|
+| How tools are approved | `bypassPermissions` | `--yolo` | `codex exec` never asks |
+| Deny lists | the host's Claude settings (`user`, `project` and `local` are all loaded) still apply | **none — Hermes has no equivalent** | none |
+| Sandbox | none | none | writes confined to the run directory (`TSSA_CODEX_SANDBOX=workspace-write`, the default); **reads and the network are not restricted** |
+| Policy delivery | system prompt | `AGENTS.md` in the run directory | `AGENTS.md` in the run directory |
+| Remaining enforcement | deny lists + host isolation | **host isolation only** | write sandbox + host isolation |
 
 On the `claude` backend there is deliberately no blanket PreToolUse allow
 hook: a hook's "allow" skips the normal permission evaluation — deny rules
@@ -417,6 +425,13 @@ included — whereas `bypassPermissions` on its own still honors them.
 On the `hermes` backend there is no configuration-level restriction at all.
 Anything the agent can reach from the shell, it can read and write. Choose it
 only where host isolation alone is an acceptable boundary.
+
+On the `codex` backend the default sandbox stops the agent from changing files
+outside its run directory, which is the part of "no real work" a sandbox can
+enforce. It does not stop the agent from reading a credential file and posting
+it: reads are unrestricted and the network has to stay open for the `taskshoot`
+CLI. `TSSA_CODEX_SANDBOX=danger-full-access` removes the sandbox and puts this
+backend in the same position as `hermes`.
 
 Either way: run this only on a machine dedicated to the bot, holding nothing
 you would not let the bot's mention audience reach. This is the same trade-off

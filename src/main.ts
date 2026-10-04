@@ -12,6 +12,7 @@
  */
 import { ActivityIndicator } from "./activity.js";
 import { captureError, flushSentry, initSentry } from "./sentry.js";
+import { preflightCodex } from "./backends/codex.js";
 import { preflightHermes } from "./backends/hermes.js";
 import { config } from "./config.js";
 import { startListener } from "./listen.js";
@@ -50,10 +51,11 @@ async function main(): Promise<void> {
   // README.
   await initSentry();
   acquireSingleInstanceLock();
-  // Only the hermes backend is checked: this daemon spawns that binary itself,
-  // whereas Claude Code is located by the Agent SDK and second-guessing it here
-  // could refuse to start a host that works.
+  // Only the backends this daemon spawns itself are checked. Claude Code is
+  // located by the Agent SDK, and second-guessing it here could refuse to
+  // start a host that works.
   if (config.agentBackend === "hermes") await preflightHermes();
+  if (config.agentBackend === "codex") await preflightCodex();
   const me = await whoAmI();
   console.log(`authenticated as ${me.display_name} (${me.id})`);
 

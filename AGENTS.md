@@ -1,7 +1,7 @@
 # taskshoot-socket-agent — AI エージェント向けガイド
 
 Taskshoot のメンションに AI エージェントで自動返信する常駐デーモン。
-エージェントのバックエンドは差し替え可能 (Claude Agent SDK / Hermes Agent CLI)。
+エージェントのバックエンドは差し替え可能 (Claude Agent SDK / Hermes Agent CLI / Codex CLI)。
 概要・セットアップは README.md を参照。ここには開発時に繰り返し使う情報だけを書く。
 
 ## 技術スタック
@@ -10,6 +10,7 @@ Taskshoot のメンションに AI エージェントで自動返信する常駐
 - pnpm
 - `@anthropic-ai/claude-agent-sdk` (バックエンド `claude`)
 - Hermes Agent CLI (バックエンド `hermes`。npm 依存ではなくホストのコマンド)
+- Codex CLI (バックエンド `codex`。同上)
 - テスト: Node 標準の `node --test` + tsx (AAA パターン)
 
 ## コマンド
@@ -66,6 +67,9 @@ FATAL に見える起動失敗が毎回 1 回入る)。
 - `src/backends/types.ts` — バックエンドの契約 (`runAgent(prompt, opts) -> {result, sessionId}`)
 - `src/backends/claude.ts` — Claude Agent SDK (既定)
 - `src/backends/hermes.ts` — Hermes Agent CLI
+- `src/backends/codex.ts` — Codex CLI (`codex exec --json`)
+- `src/backends/child-process.ts` — 子プロセスで動くバックエンド (hermes / codex) が共有する
+  起動・タイムアウト・プロセスグループの後始末
 - `src/shutdown.ts` — 停止状態 (受付を閉じる + クリーンアップ登録)
 - `src/sentry.ts` — オプトインのエラー報告 (DSN 無しなら全て no-op。SDK 既定が
   デーモンの挙動を変える箇所を pin している。README「Error reporting」が正本)

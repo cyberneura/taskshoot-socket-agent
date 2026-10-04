@@ -50,6 +50,9 @@ Two more behaviours that look like bugs and are not:
     and does not check for one at startup.
   - `hermes` runs the Hermes CLI as a child process, so that binary does have
     to be on PATH (or named through `TSSA_HERMES_BIN`).
+  - `codex` runs the Codex CLI (`codex exec`) as a child process; the binary
+    has to be on PATH (or named through `TSSA_CODEX_BIN`) and logged in
+    (`codex login status`).
 
 ## Installing
 
@@ -92,11 +95,15 @@ consumes.
 |---|---|---|
 | `TSSA_NOTIFICATION_TYPES` | `task_mentioned` | Notification types to subscribe to (comma-separated) |
 | `TSSA_POLL_MINUTES` | `30` | Polling backstop interval |
-| `TSSA_AGENT_BACKEND` | `claude` | `claude` (Agent SDK, in-process) or `hermes` (Hermes CLI) |
+| `TSSA_AGENT_BACKEND` | `claude` | `claude` (Agent SDK, in-process), `hermes` (Hermes CLI) or `codex` (Codex CLI) |
 | `TSSA_AGENT_TIMEOUT_MINUTES` | `20` | Hard timeout for one agent run |
 | `TSSA_AGENT_CWD` | `~/workspace` | Working directory for the agent (backend `claude` only) |
 | `TSSA_HERMES_BIN` | `hermes` | The Hermes CLI binary (backend `hermes`) |
 | `TSSA_HERMES_WORKDIR` | `<state dir>/hermes-workspace` | Run directory for backend `hermes`; the backend owns the `AGENTS.md` there |
+| `TSSA_CODEX_BIN` | `codex` | The Codex CLI binary (backend `codex`) |
+| `TSSA_CODEX_WORKDIR` | `<state dir>/codex-workspace` | Run directory for backend `codex`; the backend owns the `AGENTS.md` there |
+| `TSSA_CODEX_SANDBOX` | `workspace-write` | `read-only`, `workspace-write` (network left open for the `taskshoot` CLI) or `danger-full-access` |
+| `TSSA_CODEX_MODEL` | (codex config) | Model for backend `codex`; empty leaves it to `~/.codex/config.toml` |
 | `TSSA_STATE_DIR` | `~/.local/state/taskshoot-socket-agent` | Session ids + handled-notification ledger + the pid lock |
 | `TSSA_TASKSHOOT_BIN` | `taskshoot` | The CLI binary |
 | `TSSA_EXTRA_SYSTEM_PROMPT` | (empty) | Site policy appended to the agent's operating policy |
@@ -111,11 +118,12 @@ Notes that are easy to get wrong:
   from the platform's own convention. Set `TSSA_STATE_DIR` if you want it
   elsewhere.
 - The numeric variables must be positive integers and `TSSA_AGENT_BACKEND` must
-  be one of the two names; anything else throws at startup rather than falling
+  be one of the three names; anything else throws at startup rather than falling
   back to the default.
-- `TSSA_AGENT_CWD` with `TSSA_AGENT_BACKEND=hermes` is a startup error, not a
-  no-op: the hermes backend runs in a directory it owns, so the variable would
-  otherwise be silently ignored. Use `TSSA_HERMES_WORKDIR`.
+- `TSSA_AGENT_CWD` with `TSSA_AGENT_BACKEND=hermes` or `codex` is a startup
+  error, not a no-op: those backends run in a directory they own, so the
+  variable would otherwise be silently ignored. Use `TSSA_HERMES_WORKDIR` /
+  `TSSA_CODEX_WORKDIR`.
 
 ## Why it will not start
 
@@ -134,8 +142,8 @@ the order they are reached:
    `TSSA_STATE_DIR` values do not exclude each other, even on one host, and if
    both authenticate as the same bot they will both answer. A pid file left
    behind by a crash is detected as stale and taken over.
-4. **The `hermes` binary is missing** (backend `hermes` only). Only that
-   backend is checked: this daemon spawns that binary itself, whereas Claude
+4. **The `hermes` / `codex` binary is missing** (those backends only). Only
+   they are checked: this daemon spawns those binaries itself, whereas Claude
    Code is located by the Agent SDK, and second-guessing it here could refuse
    to start a host that works. Without the check every mention would fail at
    spawn and stay unread while the backstop retried it.
@@ -216,12 +224,13 @@ the model follows, not enforcement.
 
 What enforcement exists depends on the backend:
 
-| | `claude` | `hermes` |
-|---|---|---|
-| How tools are approved | `bypassPermissions` | `--yolo` |
-| Deny lists | the host's Claude settings still apply | **none — Hermes has no equivalent** |
-| Policy delivery | system prompt | `AGENTS.md` in the run directory |
-| Remaining enforcement | deny lists + host isolation | **host isolation only** |
+| | `claude` | `hermes` | `codex` |
+|---|---|---|---|
+| How tools are approved | `bypassPermissions` | `--yolo` | `codex exec` never asks |
+| Deny lists | the host's Claude settings still apply | **none — Hermes has no equivalent** | none |
+| Sandbox | none | none | writes confined to the run directory by default; **reads and the network are not restricted** |
+| Policy delivery | system prompt | `AGENTS.md` in the run directory | `AGENTS.md` in the run directory |
+| Remaining enforcement | deny lists + host isolation | **host isolation only** | write sandbox + host isolation |
 
 On the `claude` backend, do not add a blanket PreToolUse "allow" hook: a hook
 that allows skips the normal permission evaluation, deny rules included,

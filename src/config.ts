@@ -45,9 +45,9 @@ export const config = {
   pollMinutes: intEnv("TSSA_POLL_MINUTES", 30),
 
   /** Which agent runs a mention. `claude` uses the Claude Agent SDK in-process;
-   * `hermes` shells out to the Hermes Agent CLI. Default stays `claude` so
-   * existing hosts are unaffected by adding a backend. */
-  agentBackend: enumEnv("TSSA_AGENT_BACKEND", ["claude", "hermes"], "claude"),
+   * `hermes` and `codex` shell out to the Hermes Agent / Codex CLI. Default
+   * stays `claude` so existing hosts are unaffected by adding a backend. */
+  agentBackend: enumEnv("TSSA_AGENT_BACKEND", ["claude", "hermes", "codex"], "claude"),
 
   /** Hard timeout for one agent run. */
   agentTimeoutMinutes: intEnv("TSSA_AGENT_TIMEOUT_MINUTES", 20),
@@ -63,6 +63,27 @@ export const config = {
    * that file — see src/backends/hermes.ts. */
   hermesWorkdir:
     process.env.TSSA_HERMES_WORKDIR ?? path.join(stateDir, "hermes-workspace"),
+
+  /** The `codex` binary (backend `codex` only; must be on PATH by default). */
+  codexBin: process.env.TSSA_CODEX_BIN ?? "codex",
+
+  /** Working directory for the `codex` backend. Owned by the backend for the
+   * same reason as `hermesWorkdir` — see src/backends/codex.ts. */
+  codexWorkdir: process.env.TSSA_CODEX_WORKDIR ?? path.join(stateDir, "codex-workspace"),
+
+  /** Sandbox for the `codex` backend. `workspace-write` (with the network
+   * left open for the `taskshoot` CLI) is enough for a responder that only
+   * talks and investigates; `danger-full-access` is for hosts whose replies
+   * need tools the sandbox blocks. */
+  codexSandbox: enumEnv(
+    "TSSA_CODEX_SANDBOX",
+    ["read-only", "workspace-write", "danger-full-access"],
+    "workspace-write",
+  ),
+
+  /** Model for the `codex` backend. Empty (the default) leaves the choice to
+   * the host's `~/.codex/config.toml`. */
+  codexModel: process.env.TSSA_CODEX_MODEL ?? "",
 
   /** Where session ids and handled notification ids are persisted. */
   stateDir,
@@ -90,13 +111,15 @@ export const config = {
   sentryEnvironment: process.env.TSSA_SENTRY_ENVIRONMENT ?? "",
 };
 
-// The hermes backend runs in its own directory (it owns that directory's
-// AGENTS.md), so TSSA_AGENT_CWD would be silently ignored. Fail instead: an
-// operator who set it meant the agent to run somewhere specific, and finding
-// out from behaviour is far more expensive than finding out at startup.
-if (config.agentBackend === "hermes" && process.env.TSSA_AGENT_CWD) {
+// The hermes and codex backends run in their own directory (they own that
+// directory's AGENTS.md), so TSSA_AGENT_CWD would be silently ignored. Fail
+// instead: an operator who set it meant the agent to run somewhere specific,
+// and finding out from behaviour is far more expensive than finding out at
+// startup.
+if (config.agentBackend !== "claude" && process.env.TSSA_AGENT_CWD) {
+  const backend = config.agentBackend;
   throw new Error(
-    "TSSA_AGENT_CWD has no effect with TSSA_AGENT_BACKEND=hermes; " +
-      "use TSSA_HERMES_WORKDIR (the hermes backend needs a directory it owns)",
+    `TSSA_AGENT_CWD has no effect with TSSA_AGENT_BACKEND=${backend}; ` +
+      `use TSSA_${backend.toUpperCase()}_WORKDIR (the ${backend} backend needs a directory it owns)`,
   );
 }
