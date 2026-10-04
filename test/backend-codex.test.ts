@@ -31,6 +31,21 @@ switch (process.env.FAKE_CODEX_MODE) {
   case "resume-gone":
     process.stderr.write("Error: thread/resume: thread/resume failed: no rollout found for thread id " + threadId + " (code -32600)\\n");
     process.exit(1);
+  case "resume-busy":
+    process.stderr.write("Error: thread/resume: thread/resume failed: thread " + threadId + " already has an active writer\\n");
+    process.exit(1);
+  case "stream-error-exit-0":
+    emit({ type: "thread.started", thread_id: threadId });
+    emit({ type: "turn.started" });
+    emit({ type: "error", message: "stream disconnected before completion" });
+    process.exit(0);
+  case "recovered-error":
+    emit({ type: "thread.started", thread_id: threadId });
+    emit({ type: "turn.started" });
+    emit({ type: "error", message: "Reconnecting... 1/5" });
+    emit({ type: "item.completed", item: { type: "agent_message", text: "replied after reconnect" } });
+    emit({ type: "turn.completed" });
+    break;
   case "dead-before-thread":
     process.stderr.write("boom\\n");
     process.exit(1);
@@ -148,6 +163,23 @@ test("a resume of a session codex no longer has is reported as unusable, so the 
   assert.equal(error.sessionId, undefined);
 });
 
+test("a resume refused because an earlier run still holds the thread keeps the stored session", async () => {
+  // Arrange
+  // After an abrupt daemon death the previous codex process can still be
+  // writing the thread. Starting fresh here would run a second agent next to
+  // it, and both could post.
+  process.env.FAKE_CODEX_MODE = "resume-busy";
+
+  // Act
+  const error = await failure(
+    runCodex("p", { systemPromptAppend: "policy", resumeSessionId: "thread-stored" }),
+  );
+
+  // Assert
+  assert.ok(error);
+  assert.notEqual(error.sessionUnusable, true);
+});
+
 test("a resume that died for another reason keeps the stored session", async () => {
   // Arrange
   // An expired login or a crash at startup also ends before thread.started.
@@ -182,6 +214,33 @@ test("a turn that failed after the thread started reports its session, so a retr
   assert.equal(error.sessionEstablished, true);
   assert.equal(error.sessionId, "thread-new");
   assert.notEqual(error.sessionUnusable, true);
+});
+
+test("a stream error that ends the run without a turn outcome is a failed run, even on exit 0", async () => {
+  // Arrange
+  process.env.FAKE_CODEX_MODE = "stream-error-exit-0";
+
+  // Act
+  const error = await failure(runCodex("p", { systemPromptAppend: "policy" }));
+
+  // Assert
+  assert.ok(error, "resolving would mark an unanswered mention as handled");
+  assert.match(error.message, /stream disconnected/);
+  assert.equal(error.sessionEstablished, true);
+  assert.equal(error.sessionId, "thread-new");
+});
+
+test("an error event the run recovered from does not fail it", async () => {
+  // Arrange
+  // Codex reports a dropped connection as an error event and then carries on.
+  // Failing here would re-run a mention that was answered.
+  process.env.FAKE_CODEX_MODE = "recovered-error";
+
+  // Act
+  const run = await runCodex("p", { systemPromptAppend: "policy" });
+
+  // Assert
+  assert.equal(run.result, "replied after reconnect");
 });
 
 test("a failed turn is a failed run even when codex exits 0", async () => {

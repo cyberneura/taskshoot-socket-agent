@@ -25,16 +25,25 @@
  * continues it and reports the same id.
  *
  * Unlike Hermes, resuming an id Codex no longer has FAILS rather than quietly
- * starting over: exit 1, nothing on stdout, and `thread/resume failed` on
- * stderr. That is the one failure reported as `sessionUnusable`. Every other
- * failure leaves the stored session alone — a rejected model or an expired
- * login fails after `thread.started`, with the conversation still intact.
+ * starting over: exit 1, nothing on stdout, and `no rollout found` on stderr.
+ * That is the one failure reported as `sessionUnusable`. Every other failure
+ * leaves the stored session alone — including the other ways a resume can
+ * fail. `already has an active writer` in particular means an earlier run is
+ * still alive on that thread: starting fresh there would let both post.
  *
  * ## What counts as "established"
  *
  * The run is established once `thread.started` was printed: from there on the
  * agent may have run a tool and posted its comment. Before that event nothing
  * has reached the model, so the run cannot have posted anything.
+ *
+ * ## What counts as "finished"
+ *
+ * Only a `turn.completed` event. Exit 0 is not enough: a fatal stream error
+ * ends the process normally with a top-level `error` event and no turn
+ * outcome, and treating that as done would mark an unanswered mention handled.
+ * The `error` event alone is not treated as failure either — Codex also emits
+ * it for a dropped connection it then recovers from.
  *
  * SECURITY: `codex exec` never asks for approval, so the sandbox is the only
  * thing between a prompt injection and the host. The default
@@ -78,7 +87,9 @@ function sandboxArgs(): string[] {
 interface ParsedEvents {
   threadId: string;
   lastMessage: string;
-  turnError: string;
+  turnCompleted: boolean;
+  /** The most recent `turn.failed` or top-level `error` message, for the log. */
+  lastError: string;
 }
 
 /**
@@ -87,7 +98,7 @@ interface ParsedEvents {
  * session id, and losing it over one stray line would cost the conversation.
  */
 function parseEvents(stdout: string): ParsedEvents {
-  const parsed: ParsedEvents = { threadId: "", lastMessage: "", turnError: "" };
+  const parsed: ParsedEvents = { threadId: "", lastMessage: "", turnCompleted: false, lastError: "" };
   for (const line of stdout.split("\n")) {
     if (!line.startsWith("{")) continue;
     let event: {
@@ -95,6 +106,7 @@ function parseEvents(stdout: string): ParsedEvents {
       thread_id?: string;
       item?: { type?: string; text?: string };
       error?: { message?: string };
+      message?: string;
     };
     try {
       event = JSON.parse(line);
@@ -105,8 +117,13 @@ function parseEvents(stdout: string): ParsedEvents {
       parsed.threadId = event.thread_id;
     } else if (event.type === "item.completed" && event.item?.type === "agent_message") {
       parsed.lastMessage = event.item.text ?? "";
+    } else if (event.type === "turn.completed") {
+      parsed.turnCompleted = true;
     } else if (event.type === "turn.failed") {
-      parsed.turnError = event.error?.message ?? "(no message)";
+      parsed.turnCompleted = false;
+      parsed.lastError = event.error?.message ?? "(no message)";
+    } else if (event.type === "error") {
+      parsed.lastError = event.message ?? "(no message)";
     }
   }
   return parsed;
@@ -141,24 +158,25 @@ export async function runCodex(prompt: string, options: RunOptions): Promise<Age
   } catch (error) {
     const failed = error as ChildError;
     const { threadId } = parseEvents(failed.stdout ?? "");
-    const resumeFailed =
+    const sessionGone =
       options.resumeSessionId !== undefined &&
       threadId === "" &&
-      /thread\/resume/.test(failed.stderr ?? "");
+      /no rollout found/.test(failed.stderr ?? "");
     // A run that never started its thread keeps the stored session: nothing
     // ran, so the conversation the daemon holds is still the right one.
-    throw runError(error, threadId !== "", threadId || undefined, resumeFailed);
+    throw runError(error, threadId !== "", threadId || undefined, sessionGone);
   }
 
-  const { threadId, lastMessage, turnError } = parseEvents(stdout);
-  // `turn.failed` is checked even on exit 0: marking the mention handled on a
-  // turn that produced no reply would leave it unanswered for good.
-  if (turnError) {
-    throw runError(new Error(`codex turn failed: ${turnError}`), threadId !== "", threadId || undefined);
+  const { threadId, lastMessage, turnCompleted, lastError } = parseEvents(stdout);
+  if (!turnCompleted) {
+    throw runError(
+      new Error(`codex ended without completing its turn: ${lastError || "(no error event)"}`),
+      threadId !== "",
+      threadId || undefined,
+    );
   }
   if (!threadId) {
-    // No id means the next mention cannot resume this conversation, and a run
-    // that printed no events at all is not one the daemon can call complete.
+    // No id means the next mention cannot resume this conversation.
     throw runError(new Error("codex printed no thread.started event"), false);
   }
   return { result: lastMessage.trim(), sessionId: threadId };

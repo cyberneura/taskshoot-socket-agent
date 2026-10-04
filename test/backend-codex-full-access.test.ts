@@ -17,6 +17,7 @@ await writeFile(
   `#!/usr/bin/env node
 require("node:fs").writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv.slice(2)));
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "t" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
 `,
 );
 await chmod(bin, 0o755);

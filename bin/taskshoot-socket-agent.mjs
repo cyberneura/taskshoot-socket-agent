@@ -48,13 +48,21 @@ Usage:
 Environment:
   TSSA_NOTIFICATION_TYPES   notification types to subscribe to (task_mentioned)
   TSSA_POLL_MINUTES         polling backstop interval (30)
-  TSSA_AGENT_BACKEND        which agent answers: claude | hermes (claude)
+  TSSA_AGENT_BACKEND        which agent answers: claude | hermes | codex
+                            (claude)
   TSSA_AGENT_TIMEOUT_MINUTES  hard timeout for one agent run (20)
   TSSA_AGENT_CWD            working directory for the agent, backend claude
                             only (~/workspace)
   TSSA_HERMES_BIN           the hermes CLI binary, backend hermes (hermes)
   TSSA_HERMES_WORKDIR       run directory for backend hermes; it owns the
                             AGENTS.md there (<state dir>/hermes-workspace)
+  TSSA_CODEX_BIN            the codex CLI binary, backend codex (codex)
+  TSSA_CODEX_WORKDIR        run directory for backend codex; it owns the
+                            AGENTS.md there (<state dir>/codex-workspace)
+  TSSA_CODEX_SANDBOX        sandbox for backend codex: read-only |
+                            workspace-write | danger-full-access
+                            (workspace-write, network left open)
+  TSSA_CODEX_MODEL          model for backend codex (codex config)
   TSSA_STATE_DIR            session ids + handled-notification ledger
   TSSA_TASKSHOOT_BIN        the taskshoot CLI binary (taskshoot)
   TSSA_EXTRA_SYSTEM_PROMPT  site policy appended to the agent's operating policy
@@ -63,10 +71,13 @@ Environment:
                             (SDK default)
 
 Requires the \`taskshoot\` CLI (>= 0.7.0, authenticated) on PATH, plus the
-agent for the chosen backend: Claude Code (claude) or the hermes CLI (hermes).
+agent for the chosen backend: Claude Code (claude), the hermes CLI (hermes)
+or the codex CLI (codex).
 
 SECURITY: the agent runs unattended with tools auto-approved. On backend
 hermes there are no deny lists at all — host isolation is the only boundary.
+On backend codex writes are sandboxed to the run directory by default; reads
+and the network are not restricted.
 Full documentation: ${pkg.homepage ?? pkg.repository?.url ?? ""}`);
   process.exit(0);
 }
