@@ -47,8 +47,8 @@
  *
  * SECURITY: `codex exec` never asks for approval, so the sandbox is the only
  * thing between a prompt injection and the host. The default
- * (`workspace-write`) confines writes to the run directory while leaving the
- * network open — the responder needs it for the `taskshoot` CLI. It does NOT
+ * (`workspace-write`) confines writes to the run directory and the temporary
+ * directories (`/tmp`, `$TMPDIR`) while leaving the network open — the responder needs it for the `taskshoot` CLI. It does NOT
  * restrict reads: anything the daemon's user can read, the agent can read and
  * post. `danger-full-access` removes the sandbox altogether. See the README
  * before deploying this anywhere.
@@ -75,13 +75,10 @@ function sandboxArgs(): string[] {
   if (config.codexSandbox === "danger-full-access") {
     return ["--dangerously-bypass-approvals-and-sandbox"];
   }
-  if (config.codexSandbox === "workspace-write") {
-    // workspace-write blocks the network unless asked, and without it the
-    // agent cannot run the `taskshoot` CLI — it could read the mention but
-    // never answer it.
-    return ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"];
-  }
-  return ["--sandbox", config.codexSandbox];
+  // workspace-write blocks the network unless asked, and without it the agent
+  // cannot run the `taskshoot` CLI — it could read the mention but never
+  // answer it.
+  return ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"];
 }
 
 interface ParsedEvents {

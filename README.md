@@ -108,7 +108,7 @@ environment. Deployment templates (both variants):
 | `TSSA_HERMES_WORKDIR` | `<state dir>/hermes-workspace` | Run directory for backend `hermes`; it owns the `AGENTS.md` there |
 | `TSSA_CODEX_BIN` | `codex` | The Codex CLI binary (backend `codex`) |
 | `TSSA_CODEX_WORKDIR` | `<state dir>/codex-workspace` | Run directory for backend `codex`; it owns the `AGENTS.md` there |
-| `TSSA_CODEX_SANDBOX` | `workspace-write` | Sandbox for backend `codex`: `read-only`, `workspace-write` (network left open for the `taskshoot` CLI) or `danger-full-access` (no sandbox) |
+| `TSSA_CODEX_SANDBOX` | `workspace-write` | Sandbox for backend `codex`: `workspace-write` (writes limited to the run directory, `/tmp` and `$TMPDIR`; network left open for the `taskshoot` CLI) or `danger-full-access` (no sandbox) |
 | `TSSA_CODEX_MODEL` | (codex config) | Model for backend `codex`. Empty leaves it to `~/.codex/config.toml` |
 | `TSSA_STATE_DIR` | `~/.local/state/taskshoot-socket-agent` | Session ids + handled-notification ledger |
 | `TSSA_TASKSHOOT_BIN` | `taskshoot` | The CLI binary |
@@ -414,7 +414,7 @@ What enforcement exists depends on the backend:
 |---|---|---|---|
 | How tools are approved | `bypassPermissions` | `--yolo` | `codex exec` never asks |
 | Deny lists | the host's Claude settings (`user`, `project` and `local` are all loaded) still apply | **none — Hermes has no equivalent** | none |
-| Sandbox | none | none | writes confined to the run directory (`TSSA_CODEX_SANDBOX=workspace-write`, the default); **reads and the network are not restricted** |
+| Sandbox | none | none | writes confined to the run directory, `/tmp` and `$TMPDIR` (`TSSA_CODEX_SANDBOX=workspace-write`, the default); **reads and the network are not restricted** |
 | Policy delivery | system prompt | `AGENTS.md` in the run directory | `AGENTS.md` in the run directory |
 | Remaining enforcement | deny lists + host isolation | **host isolation only** | write sandbox + host isolation |
 
@@ -427,8 +427,9 @@ Anything the agent can reach from the shell, it can read and write. Choose it
 only where host isolation alone is an acceptable boundary.
 
 On the `codex` backend the default sandbox stops the agent from changing files
-outside its run directory, which is the part of "no real work" a sandbox can
-enforce. It does not stop the agent from reading a credential file and posting
+outside its run directory and the temporary directories (`/tmp`, `$TMPDIR` —
+still writable, which matters on a shared host), which is the part of "no real
+work" a sandbox can enforce. It does not stop the agent from reading a credential file and posting
 it: reads are unrestricted and the network has to stay open for the `taskshoot`
 CLI. `TSSA_CODEX_SANDBOX=danger-full-access` removes the sandbox and puts this
 backend in the same position as `hermes`.

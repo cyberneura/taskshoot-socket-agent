@@ -102,7 +102,7 @@ consumes.
 | `TSSA_HERMES_WORKDIR` | `<state dir>/hermes-workspace` | Run directory for backend `hermes`; the backend owns the `AGENTS.md` there |
 | `TSSA_CODEX_BIN` | `codex` | The Codex CLI binary (backend `codex`) |
 | `TSSA_CODEX_WORKDIR` | `<state dir>/codex-workspace` | Run directory for backend `codex`; the backend owns the `AGENTS.md` there |
-| `TSSA_CODEX_SANDBOX` | `workspace-write` | `read-only`, `workspace-write` (network left open for the `taskshoot` CLI) or `danger-full-access` |
+| `TSSA_CODEX_SANDBOX` | `workspace-write` | `workspace-write` (writes limited to the run directory, `/tmp` and `$TMPDIR`; network left open for the `taskshoot` CLI) or `danger-full-access` |
 | `TSSA_CODEX_MODEL` | (codex config) | Model for backend `codex`; empty leaves it to `~/.codex/config.toml` |
 | `TSSA_STATE_DIR` | `~/.local/state/taskshoot-socket-agent` | Session ids + handled-notification ledger + the pid lock |
 | `TSSA_TASKSHOOT_BIN` | `taskshoot` | The CLI binary |
@@ -228,7 +228,7 @@ What enforcement exists depends on the backend:
 |---|---|---|---|
 | How tools are approved | `bypassPermissions` | `--yolo` | `codex exec` never asks |
 | Deny lists | the host's Claude settings still apply | **none — Hermes has no equivalent** | none |
-| Sandbox | none | none | writes confined to the run directory by default; **reads and the network are not restricted** |
+| Sandbox | none | none | writes confined to the run directory, `/tmp` and `$TMPDIR` by default; **reads and the network are not restricted** |
 | Policy delivery | system prompt | `AGENTS.md` in the run directory | `AGENTS.md` in the run directory |
 | Remaining enforcement | deny lists + host isolation | **host isolation only** | write sandbox + host isolation |
 

@@ -74,10 +74,14 @@ export const config = {
   /** Sandbox for the `codex` backend. `workspace-write` (with the network
    * left open for the `taskshoot` CLI) is enough for a responder that only
    * talks and investigates; `danger-full-access` is for hosts whose replies
-   * need tools the sandbox blocks. */
+   * need tools the sandbox blocks.
+   *
+   * Codex's `read-only` is deliberately not offered: it has no network, so
+   * the agent could read a mention but never post the reply — and the run
+   * would still complete, marking the mention handled. */
   codexSandbox: enumEnv(
     "TSSA_CODEX_SANDBOX",
-    ["read-only", "workspace-write", "danger-full-access"],
+    ["workspace-write", "danger-full-access"],
     "workspace-write",
   ),
 

@@ -59,9 +59,10 @@ Environment:
   TSSA_CODEX_BIN            the codex CLI binary, backend codex (codex)
   TSSA_CODEX_WORKDIR        run directory for backend codex; it owns the
                             AGENTS.md there (<state dir>/codex-workspace)
-  TSSA_CODEX_SANDBOX        sandbox for backend codex: read-only |
-                            workspace-write | danger-full-access
-                            (workspace-write, network left open)
+  TSSA_CODEX_SANDBOX        sandbox for backend codex: workspace-write |
+                            danger-full-access (workspace-write: writes
+                            limited to the run directory and temp dirs,
+                            network left open)
   TSSA_CODEX_MODEL          model for backend codex (codex config)
   TSSA_STATE_DIR            session ids + handled-notification ledger
   TSSA_TASKSHOOT_BIN        the taskshoot CLI binary (taskshoot)
@@ -76,8 +77,8 @@ or the codex CLI (codex).
 
 SECURITY: the agent runs unattended with tools auto-approved. On backend
 hermes there are no deny lists at all — host isolation is the only boundary.
-On backend codex writes are sandboxed to the run directory by default; reads
-and the network are not restricted.
+On backend codex writes are sandboxed to the run directory and the temp
+directories by default; reads and the network are not restricted.
 Full documentation: ${pkg.homepage ?? pkg.repository?.url ?? ""}`);
   process.exit(0);
 }
