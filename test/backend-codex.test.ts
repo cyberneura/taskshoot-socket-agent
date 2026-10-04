@@ -121,7 +121,11 @@ test("sandboxes writes by default but leaves the network open for the taskshoot 
   // Assert
   const { argv } = await recordedRun();
   assert.equal(argv[argv.indexOf("--sandbox") + 1], "workspace-write");
-  assert.equal(argv[argv.indexOf("-c") + 1], "sandbox_workspace_write.network_access=true");
+  assert.ok(argv.includes("sandbox_workspace_write.network_access=true"));
+  assert.ok(
+    argv.includes("sandbox_workspace_write.writable_roots=[]"),
+    "writable roots from the host's codex config must not be inherited",
+  );
   assert.ok(!argv.includes("--dangerously-bypass-approvals-and-sandbox"));
   assert.ok(!argv.includes("--model"), "an unset model is left to the host's codex config");
 });

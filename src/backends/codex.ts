@@ -75,10 +75,20 @@ function sandboxArgs(): string[] {
   if (config.codexSandbox === "danger-full-access") {
     return ["--dangerously-bypass-approvals-and-sandbox"];
   }
-  // workspace-write blocks the network unless asked, and without it the agent
-  // cannot run the `taskshoot` CLI — it could read the mention but never
-  // answer it.
-  return ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"];
+  return [
+    "--sandbox",
+    "workspace-write",
+    // workspace-write blocks the network unless asked, and without it the
+    // agent cannot run the `taskshoot` CLI — it could read the mention but
+    // never answer it.
+    "-c",
+    "sandbox_workspace_write.network_access=true",
+    // The host's ~/.codex/config.toml may list extra writable roots for its
+    // own interactive use. They would be inherited here and widen what a
+    // prompt injection can modify, so they are cleared.
+    "-c",
+    "sandbox_workspace_write.writable_roots=[]",
+  ];
 }
 
 interface ParsedEvents {
