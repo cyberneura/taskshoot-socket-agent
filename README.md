@@ -416,7 +416,7 @@ What enforcement exists depends on the backend:
 | Deny lists | the host's Claude settings (`user`, `project` and `local` are all loaded) still apply | **none — Hermes has no equivalent** | none |
 | Sandbox | none | none | writes confined to the run directory, `/tmp` and `$TMPDIR` (`TSSA_CODEX_SANDBOX=workspace-write`, the default); **reads and the network are not restricted** |
 | Policy delivery | system prompt | `AGENTS.md` in the run directory | `AGENTS.md` in the run directory |
-| Remaining enforcement | deny lists + host isolation | **host isolation only** | write sandbox + host isolation |
+| Remaining enforcement | deny lists + host isolation | **host isolation only** | write sandbox for shell commands (not for the host's MCP servers / plugins) + host isolation |
 
 On the `claude` backend there is deliberately no blanket PreToolUse allow
 hook: a hook's "allow" skips the normal permission evaluation — deny rules
@@ -433,6 +433,20 @@ work" a sandbox can enforce. It does not stop the agent from reading a credentia
 it: reads are unrestricted and the network has to stay open for the `taskshoot`
 CLI. `TSSA_CODEX_SANDBOX=danger-full-access` removes the sandbox and puts this
 backend in the same position as `hermes`.
+
+Two things the `codex` sandbox does not cover:
+
+- **MCP servers and plugins configured on the host** (`~/.codex/config.toml`).
+  Codex starts them as ordinary processes outside the sandbox, and the backend
+  does not disable them. A host whose Codex has a filesystem, shell, browser or
+  computer-use tool installed hands that tool to the responder too. Remove
+  what the responder should not have from the host's Codex configuration.
+- **A shell tool running when the run is cut off.** Codex starts each shell
+  tool in a session of its own, so the process group the daemon signals on a
+  timeout or shutdown contains Codex but not that tool. Codex receives SIGTERM
+  first and has the grace period to stop its tools; that it always does so is
+  not verified. A surviving tool could post a comment after the run was
+  rejected, and the retry would then answer the mention a second time.
 
 Either way: run this only on a machine dedicated to the bot, holding nothing
 you would not let the bot's mention audience reach. This is the same trade-off

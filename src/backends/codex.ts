@@ -50,8 +50,16 @@
  * (`workspace-write`) confines writes to the run directory and the temporary
  * directories (`/tmp`, `$TMPDIR`) while leaving the network open — the responder needs it for the `taskshoot` CLI. It does NOT
  * restrict reads: anything the daemon's user can read, the agent can read and
- * post. `danger-full-access` removes the sandbox altogether. See the README
- * before deploying this anywhere.
+ * post. Nor does it cover MCP servers and plugins from the host's
+ * `~/.codex/config.toml`: Codex starts those outside the sandbox, and this
+ * backend does not disable them. `danger-full-access` removes the sandbox
+ * altogether. See the README before deploying this anywhere.
+ *
+ * KNOWN GAP: Codex starts each shell tool in its own session, so the process
+ * group this daemon signals on timeout or shutdown holds Codex but not a tool
+ * it is running at that moment. Codex gets SIGTERM first and the grace period
+ * to stop its tools; whether it always does has not been verified. A tool that
+ * survives could still post a comment after the run was rejected.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";

@@ -230,7 +230,7 @@ What enforcement exists depends on the backend:
 | Deny lists | the host's Claude settings still apply | **none — Hermes has no equivalent** | none |
 | Sandbox | none | none | writes confined to the run directory, `/tmp` and `$TMPDIR` by default; **reads and the network are not restricted** |
 | Policy delivery | system prompt | `AGENTS.md` in the run directory | `AGENTS.md` in the run directory |
-| Remaining enforcement | deny lists + host isolation | **host isolation only** | write sandbox + host isolation |
+| Remaining enforcement | deny lists + host isolation | **host isolation only** | write sandbox for shell commands (not for the host's MCP servers / plugins) + host isolation |
 
 On the `claude` backend, do not add a blanket PreToolUse "allow" hook: a hook
 that allows skips the normal permission evaluation, deny rules included,
