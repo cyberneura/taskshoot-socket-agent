@@ -125,6 +125,18 @@ environment. Deployment templates (both variants):
   agent run (`error_max_turns` and friends included) leaves the notification
   unhandled for the backstop to retry; a completed run (including a
   deliberate no-reply) marks it handled and read.
+- **Startup waits out a temporarily unavailable API.** The identity check
+  (`taskshoot me`) is the first call to the API, and after a host reboot the
+  API may still be coming up with it. Failures that can clear on their own —
+  5xx, 408 and 429 responses, connection / DNS / TLS errors, and a call that
+  takes longer than 30 seconds — are retried with exponential backoff (5 s,
+  doubling, at most 60 s apart), with one line per retry on stderr. Any other
+  failure (401 / 403, no API key configured, the CLI not found) stops startup
+  at once. No new attempt starts after 15 minutes (the one in flight may run
+  up to its 30-second cap past that), and the last error is then fatal as
+  before. By then the process has outlived any reasonable `startsecs`, so
+  supervisor's `autorestart` (or launchd's `KeepAlive`) starts it again
+  instead of giving up, as it would after a few failures within seconds.
 - **Delivery is at-least-once at the edges.** If the process dies between the
   agent posting its comment and the ledger being saved, the mention is
   retried; the system prompt tells the agent to read the thread and never
