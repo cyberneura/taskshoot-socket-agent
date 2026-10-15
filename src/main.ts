@@ -39,7 +39,8 @@ import {
 const MAX_ENQUEUE_PER_POLL = 100;
 
 async function main(): Promise<void> {
-  // Captured before any startup work: whoAmI() can retry for minutes, and the
+  // Captured before any startup work: whoAmI() retries transient API failures
+  // for up to 15 minutes (a host reboot brings the API up with us), and the
   // first-run backlog cutoff must predate everything this process might have
   // been expected to answer.
   const bootedAt = Date.now();

@@ -37,8 +37,147 @@ async function runJson<T>(args: string[]): Promise<T> {
   return JSON.parse(stdout) as T;
 }
 
-export async function whoAmI(): Promise<{ id: string; display_name: string }> {
-  return runJson(["me"]);
+/** Hard cap on one `taskshoot me` call. Without it a stalled connection
+ * would hold startup for as long as the CLI's own HTTP client waits, and the
+ * retry deadline below would never be reached. */
+const WHOAMI_EXEC_TIMEOUT_MS = 30_000;
+
+export interface StartupRetryOptions {
+  /** Wait before the second attempt; doubled after each failure. */
+  initialDelayMs: number;
+  /** Ceiling for the doubling. */
+  maxDelayMs: number;
+  /** No new attempt starts after this much time since the first one. An
+   * attempt already running is not cut short, so the whole retry can overrun
+   * this by one attempt's own time limit (30 s for `whoAmI`). */
+  maxWaitMs: number;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  log: (message: string) => void;
+}
+
+/**
+ * Startup retry budget for `whoAmI()`. A host reboot brings the daemon up
+ * together with the API and its database, and the API answers 503 (or refuses
+ * the connection) for a while. Failing at once there exhausts supervisord's
+ * `startretries` within seconds and leaves the daemon FATAL for good.
+ *
+ * 15 minutes is long enough to outlast a reboot of the backing services, and
+ * also well past the supervisor's `startsecs`: if the budget runs out, the
+ * process has already counted as started, so the exit that follows is
+ * restarted by `autorestart` instead of ending in FATAL.
+ */
+export const STARTUP_RETRY_DEFAULTS: StartupRetryOptions = {
+  initialDelayMs: 5_000,
+  maxDelayMs: 60_000,
+  maxWaitMs: 15 * 60_000,
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  now: () => Date.now(),
+  log: (message) => console.error(message),
+};
+
+/** HTTP statuses that say "try again later" rather than "this will never work". */
+function isTransientStatus(status: number): boolean {
+  return status >= 500 || status === 408 || status === 429;
+}
+
+/**
+ * Whether a failed `taskshoot` CLI call is worth retrying.
+ *
+ * Retried: 5xx / 408 / 429 from the API (`API error <status>: ...`), failures
+ * to get a response at all (`request failed: ...`: connection refused, DNS,
+ * TLS, timeouts — a rebooting ingress serves a default certificate for a
+ * while, so `invalid peer certificate` belongs here too), and our own exec
+ * timeout. Everything else fails at once: a 401/403 or a missing API key is
+ * not going to fix itself, and neither is a missing binary (`ENOENT`) or
+ * output this daemon cannot parse. Unknown errors are treated as permanent so
+ * that a misconfiguration surfaces immediately instead of after the budget.
+ */
+export function isTransientCliError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const { killed, code, stderr } = error as {
+    killed?: unknown;
+    code?: unknown;
+    stderr?: unknown;
+  };
+  // execFile's `timeout` kills the child and reports `killed: true`.
+  if (killed === true) return true;
+  // A string code is a spawn failure (ENOENT, EACCES): the CLI itself is unusable.
+  if (typeof code === "string") return false;
+  if (typeof stderr !== "string") return false;
+  const status = /API error (\d{3})\b/.exec(stderr);
+  if (status) return isTransientStatus(Number(status[1]));
+  return /\brequest failed\b/.test(stderr);
+}
+
+/** First line of the CLI's stderr (or the error message), for one log line. */
+function describeCliError(error: unknown): string {
+  const stderr = (error as { stderr?: unknown } | null)?.stderr;
+  const text =
+    typeof stderr === "string" && stderr.trim()
+      ? stderr
+      : error instanceof Error
+        ? error.message
+        : String(error);
+  return (text.trim().split("\n")[0] ?? "").slice(0, 300);
+}
+
+/**
+ * Run `fn`, retrying transient CLI failures with exponential backoff until
+ * `maxWaitMs` has passed. A permanent failure, or the last transient one after
+ * the deadline, is rethrown unchanged so the caller's fatal path reports the
+ * real error.
+ */
+export async function retryTransientCliErrors<T>(
+  label: string,
+  fn: () => Promise<T>,
+  options: StartupRetryOptions = STARTUP_RETRY_DEFAULTS,
+): Promise<T> {
+  const startedAt = options.now();
+  let delay = options.initialDelayMs;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (!isTransientCliError(error)) throw error;
+      const remaining = options.maxWaitMs - (options.now() - startedAt);
+      if (remaining <= 0) {
+        options.log(
+          `[startup] ${label} still failing after ${attempt} attempts; giving up: ${describeCliError(error)}`,
+        );
+        throw error;
+      }
+      // The last wait is cut short so the final attempt lands on the deadline
+      // rather than up to a full delay past it.
+      const wait = Math.min(delay, remaining);
+      options.log(
+        `[startup] ${label} failed (attempt ${attempt}): ${describeCliError(error)}; ` +
+          `retrying in ${Math.ceil(wait / 1000)}s`,
+      );
+      await options.sleep(wait);
+      delay = Math.min(delay * 2, options.maxDelayMs);
+    }
+  }
+}
+
+/**
+ * The daemon's own identity. Called once at startup, where the API may still
+ * be coming up (host reboot), so transient failures are retried for up to
+ * `STARTUP_RETRY_DEFAULTS.maxWaitMs`; authentication errors still fail at once.
+ */
+export async function whoAmI(
+  options: StartupRetryOptions = STARTUP_RETRY_DEFAULTS,
+): Promise<{ id: string; display_name: string }> {
+  return retryTransientCliErrors(
+    "taskshoot me",
+    async () => {
+      const { stdout } = await execFileAsync(config.taskshootBin, ["--json", "me"], {
+        timeout: WHOAMI_EXEC_TIMEOUT_MS,
+      });
+      return JSON.parse(stdout) as { id: string; display_name: string };
+    },
+    options,
+  );
 }
 
 /** One page of `notifications list`; the server caps a page at this. */
