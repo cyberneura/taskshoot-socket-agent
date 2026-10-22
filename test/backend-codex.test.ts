@@ -14,6 +14,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rm,
   symlink,
@@ -168,6 +169,26 @@ test("an override file left by an earlier run does not survive into the next one
 
   // Assert
   await assert.rejects(lstat(override), /ENOENT/);
+});
+
+test("a directory left at the policy's name is replaced, so later mentions still run", async () => {
+  // Arrange
+  // A rename cannot replace a directory, so without removing it every later
+  // mention would fail before Codex starts.
+  process.env.FAKE_CODEX_MODE = "ok";
+  const policy = path.join(workdir, "AGENTS.md");
+  await rm(policy, { recursive: true, force: true });
+  await mkdir(path.join(policy, "nested"), { recursive: true });
+
+  // Act
+  const run = await runCodex("p", { systemPromptAppend: "the daemon policy" });
+
+  // Assert
+  assert.equal(run.sessionId, "thread-new");
+  assert.ok((await lstat(policy)).isFile());
+  assert.match(await readFile(policy, "utf8"), /the daemon policy/);
+  const leftovers = (await readdir(workdir)).filter((name) => name.startsWith(".AGENTS.md."));
+  assert.deepEqual(leftovers, []);
 });
 
 test("a run whose event stream is far larger than the kept output still yields its session and answer", async () => {

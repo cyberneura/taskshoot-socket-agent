@@ -81,9 +81,21 @@ async function prepareWorkdir(systemPromptAppend: string): Promise<string> {
   // outside it; this process is not sandboxed, and writing through the link
   // would overwrite that file on the next mention. A new file created
   // exclusively and renamed over the name replaces the link itself.
+  //
+  // Whatever is at the name is removed first: a run could also leave a
+  // directory there, which a rename cannot replace (EISDIR), and every later
+  // mention would fail here. `rm` removes a link, not what it points to.
+  // Codex is not running between runs, so nothing reads the gap.
+  const target = path.join(dir, "AGENTS.md");
   const staged = path.join(dir, `.AGENTS.md.${randomUUID()}`);
-  await writeFile(staged, `${AGENTS_FILE_HEADER}\n\n${systemPromptAppend}\n`, { flag: "wx" });
-  await rename(staged, path.join(dir, "AGENTS.md"));
+  try {
+    await writeFile(staged, `${AGENTS_FILE_HEADER}\n\n${systemPromptAppend}\n`, { flag: "wx" });
+    await rm(target, { recursive: true, force: true });
+    await rename(staged, target);
+  } catch (err) {
+    await rm(staged, { force: true });
+    throw err;
+  }
   // Codex reads `AGENTS.override.md` in preference to `AGENTS.md`. A run could
   // plant one to replace the policy for every later mention, so none survives
   // into the next run.
