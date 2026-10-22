@@ -58,7 +58,8 @@ Environment:
                             AGENTS.md there (<state dir>/hermes-workspace)
   TSSA_CODEX_BIN            the codex CLI binary, backend codex (codex)
   TSSA_CODEX_WORKDIR        run directory for backend codex; it owns the
-                            AGENTS.md there (<state dir>/codex-workspace)
+                            AGENTS.md there (<state dir>/codex-workspace);
+                            not inside /tmp or $TMPDIR with workspace-write
   TSSA_CODEX_SANDBOX        sandbox for backend codex: workspace-write |
                             danger-full-access (workspace-write: writes
                             limited to the run directory and temp dirs,

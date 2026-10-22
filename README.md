@@ -107,7 +107,7 @@ environment. Deployment templates (both variants):
 | `TSSA_HERMES_BIN` | `hermes` | The Hermes CLI binary (backend `hermes`) |
 | `TSSA_HERMES_WORKDIR` | `<state dir>/hermes-workspace` | Run directory for backend `hermes`; it owns the `AGENTS.md` there |
 | `TSSA_CODEX_BIN` | `codex` | The Codex CLI binary (backend `codex`) |
-| `TSSA_CODEX_WORKDIR` | `<state dir>/codex-workspace` | Run directory for backend `codex`; it owns the `AGENTS.md` there |
+| `TSSA_CODEX_WORKDIR` | `<state dir>/codex-workspace` | Run directory for backend `codex`; it owns the `AGENTS.md` there. With `workspace-write`, startup refuses a path inside `/tmp` or `$TMPDIR` (the agent can write there, so it could replace the directory with a link) |
 | `TSSA_CODEX_SANDBOX` | `workspace-write` | Sandbox for backend `codex`: `workspace-write` (writes limited to the run directory, `/tmp` and `$TMPDIR`; network left open for the `taskshoot` CLI) or `danger-full-access` (no sandbox) |
 | `TSSA_CODEX_MODEL` | (codex config) | Model for backend `codex`. Empty leaves it to `~/.codex/config.toml` |
 | `TSSA_STATE_DIR` | `~/.local/state/taskshoot-socket-agent` | Session ids + handled-notification ledger |

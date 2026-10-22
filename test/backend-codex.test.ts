@@ -16,6 +16,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -96,7 +97,7 @@ process.env.TSSA_STATE_DIR = dir;
 delete process.env.TSSA_CODEX_SANDBOX;
 delete process.env.TSSA_CODEX_MODEL;
 
-const { runCodex } = await import("../src/backends/codex.js");
+const { runCodex, isInsideTempDir } = await import("../src/backends/codex.js");
 const { appendBounded } = await import("../src/backends/child-process.js");
 
 async function recordedRun() {
@@ -189,6 +190,53 @@ test("a directory left at the policy's name is replaced, so later mentions still
   assert.match(await readFile(policy, "utf8"), /the daemon policy/);
   const leftovers = (await readdir(workdir)).filter((name) => name.startsWith(".AGENTS.md."));
   assert.deepEqual(leftovers, []);
+});
+
+test("a work directory replaced by a link is refused before anything is written through it", async () => {
+  // Arrange
+  process.env.FAKE_CODEX_MODE = "ok";
+  const outside = await mkdtemp(path.join(tmpdir(), "tssa-codex-outside-"));
+  const victim = path.join(outside, "AGENTS.md");
+  await writeFile(victim, "not the daemon's");
+  const moved = `${workdir}.moved`;
+  await rm(moved, { recursive: true, force: true });
+  await mkdir(workdir, { recursive: true });
+  await rename(workdir, moved);
+  await symlink(outside, workdir);
+
+  try {
+    // Act
+    const run = runCodex("p", { systemPromptAppend: "policy" });
+
+    // Assert
+    await assert.rejects(run, /not a plain directory/);
+    assert.equal(await readFile(victim, "utf8"), "not the daemon's");
+  } finally {
+    await rm(workdir, { force: true });
+    await rename(moved, workdir);
+  }
+});
+
+test("a work directory inside a temporary directory is recognised, links included", async () => {
+  // Arrange
+  const temp = await mkdtemp(path.join(tmpdir(), "tssa-codex-temp-"));
+  const elsewhere = await mkdtemp(path.join(tmpdir(), "tssa-codex-elsewhere-"));
+  const linkToTemp = path.join(elsewhere, "link");
+  await symlink(temp, linkToTemp);
+
+  // Act
+  const inside = await isInsideTempDir(path.join(temp, "not-yet", "workspace"), [temp]);
+  const itself = await isInsideTempDir(temp, [temp]);
+  const throughLink = await isInsideTempDir(path.join(linkToTemp, "workspace"), [temp]);
+  const sibling = await isInsideTempDir(`${temp}-sibling/workspace`, [temp]);
+  const outside = await isInsideTempDir(path.join(elsewhere, "workspace"), [temp]);
+
+  // Assert
+  assert.equal(inside, true);
+  assert.equal(itself, true);
+  assert.equal(throughLink, true);
+  assert.equal(sibling, false);
+  assert.equal(outside, false);
 });
 
 test("a run whose event stream is far larger than the kept output still yields its session and answer", async () => {

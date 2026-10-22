@@ -101,7 +101,7 @@ consumes.
 | `TSSA_HERMES_BIN` | `hermes` | The Hermes CLI binary (backend `hermes`) |
 | `TSSA_HERMES_WORKDIR` | `<state dir>/hermes-workspace` | Run directory for backend `hermes`; the backend owns the `AGENTS.md` there |
 | `TSSA_CODEX_BIN` | `codex` | The Codex CLI binary (backend `codex`) |
-| `TSSA_CODEX_WORKDIR` | `<state dir>/codex-workspace` | Run directory for backend `codex`; the backend owns the `AGENTS.md` there |
+| `TSSA_CODEX_WORKDIR` | `<state dir>/codex-workspace` | Run directory for backend `codex`; the backend owns the `AGENTS.md` there. Not inside `/tmp` or `$TMPDIR` with `workspace-write` (startup error) |
 | `TSSA_CODEX_SANDBOX` | `workspace-write` | `workspace-write` (writes limited to the run directory, `/tmp` and `$TMPDIR`; network left open for the `taskshoot` CLI) or `danger-full-access` |
 | `TSSA_CODEX_MODEL` | (codex config) | Model for backend `codex`; empty leaves it to `~/.codex/config.toml` |
 | `TSSA_STATE_DIR` | `~/.local/state/taskshoot-socket-agent` | Session ids + handled-notification ledger + the pid lock |
@@ -147,6 +147,10 @@ the order they are reached:
    Code is located by the Agent SDK, and second-guessing it here could refuse
    to start a host that works. Without the check every mention would fail at
    spawn and stay unread while the backstop retried it.
+   With `TSSA_CODEX_SANDBOX=workspace-write` (the default), the same step also
+   refuses a `TSSA_CODEX_WORKDIR` inside `/tmp` or `$TMPDIR`: the sandbox lets
+   the agent write there, so a run could swap the run directory for a link
+   and the daemon's next, unsandboxed write of `AGENTS.md` would go through it.
 5. **The identity check (`taskshoot --json me`) fails.** An authentication
    failure (401 / 403, no API key configured) or a missing `taskshoot` binary
    stops startup at once. A failure that can clear on its own — a 5xx, 408 or
