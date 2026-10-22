@@ -192,6 +192,24 @@ test("a directory left at the policy's name is replaced, so later mentions still
   assert.deepEqual(leftovers, []);
 });
 
+test("a work directory left without write permission is writable again for the next run", async () => {
+  // Arrange
+  process.env.FAKE_CODEX_MODE = "ok";
+  await mkdir(workdir, { recursive: true });
+  await chmod(workdir, 0o500);
+
+  try {
+    // Act
+    const run = await runCodex("p", { systemPromptAppend: "the daemon policy" });
+
+    // Assert
+    assert.equal(run.sessionId, "thread-new");
+    assert.match(await readFile(path.join(workdir, "AGENTS.md"), "utf8"), /the daemon policy/);
+  } finally {
+    await chmod(workdir, 0o700);
+  }
+});
+
 test("a work directory replaced by a link is refused before anything is written through it", async () => {
   // Arrange
   process.env.FAKE_CODEX_MODE = "ok";

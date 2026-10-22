@@ -62,7 +62,7 @@
  * survives could still post a comment after the run was rejected.
  */
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -85,6 +85,9 @@ async function prepareWorkdir(systemPromptAppend: string): Promise<string> {
   if (entry.isSymbolicLink() || !entry.isDirectory()) {
     throw new Error(`TSSA_CODEX_WORKDIR is not a plain directory: ${dir}`);
   }
+  // A run can also take its own write permission away (`chmod a-w .`), and
+  // every later mention would then fail on the write below.
+  await chmod(dir, 0o700);
   // Never written in place. The sandboxed agent can write in this directory,
   // so a prompt-injected run could leave `AGENTS.md` as a link to a file
   // outside it; this process is not sandboxed, and writing through the link
