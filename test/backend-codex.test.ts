@@ -246,6 +246,7 @@ test("a work directory inside a temporary directory is recognised, links include
   const inside = await isInsideTempDir(path.join(temp, "not-yet", "workspace"), [temp]);
   const itself = await isInsideTempDir(temp, [temp]);
   const throughLink = await isInsideTempDir(path.join(linkToTemp, "workspace"), [temp]);
+  const dotted = await isInsideTempDir(path.join(temp, "..x", "workspace"), [temp]);
   const sibling = await isInsideTempDir(`${temp}-sibling/workspace`, [temp]);
   const outside = await isInsideTempDir(path.join(elsewhere, "workspace"), [temp]);
 
@@ -253,6 +254,7 @@ test("a work directory inside a temporary directory is recognised, links include
   assert.equal(inside, true);
   assert.equal(itself, true);
   assert.equal(throughLink, true);
+  assert.equal(dotted, true);
   assert.equal(sibling, false);
   assert.equal(outside, false);
 });

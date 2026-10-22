@@ -209,7 +209,9 @@ export async function isInsideTempDir(workdir: string, tempDirs: string[]): Prom
   const resolved = await resolveExisting(workdir);
   for (const tempDir of tempDirs) {
     const relative = path.relative(await resolveExisting(tempDir), resolved);
-    if (!relative.startsWith("..") && !path.isAbsolute(relative)) return true;
+    // `..x` is a name inside, not a step out.
+    const outside = relative === ".." || relative.startsWith(`..${path.sep}`);
+    if (!outside && !path.isAbsolute(relative)) return true;
   }
   return false;
 }
