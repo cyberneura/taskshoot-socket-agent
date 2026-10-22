@@ -6,6 +6,7 @@
  * `claude` so hosts that predate this switch keep their behaviour.
  */
 import { runClaude } from "./backends/claude.js";
+import { runCodex } from "./backends/codex.js";
 import { HERMES_REPLY_NOTE, runHermes } from "./backends/hermes.js";
 import type { AgentBackend } from "./backends/types.js";
 import { config } from "./config.js";
@@ -15,6 +16,7 @@ export type { AgentRunResult, RunError } from "./backends/types.js";
 const backends: Record<typeof config.agentBackend, AgentBackend> = {
   claude: runClaude,
   hermes: runHermes,
+  codex: runCodex,
 };
 
 export const runAgent: AgentBackend = (prompt, options) =>

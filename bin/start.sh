@@ -2,7 +2,7 @@
 #
 # Entry point for supervisor / launchd. Both start programs with an almost
 # empty environment, so PATH (taskshoot, node, and the agent binary for the
-# configured TSSA_AGENT_BACKEND: claude or hermes) is set up here rather
+# configured TSSA_AGENT_BACKEND: claude, hermes or codex) is set up here rather
 # than assumed. Extend PATH via TSSA_EXTRA_PATH or a local .env file.
 
 set -euo pipefail
