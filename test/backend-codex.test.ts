@@ -192,6 +192,30 @@ test("a directory left at the policy's name is replaced, so later mentions still
   assert.deepEqual(leftovers, []);
 });
 
+test("policy names left as directories without any permission are still replaced", async () => {
+  // Arrange
+  // A plain recursive rm cannot read a mode-000 directory to empty it.
+  process.env.FAKE_CODEX_MODE = "ok";
+  await mkdir(workdir, { recursive: true });
+  const policy = path.join(workdir, "AGENTS.md");
+  const override = path.join(workdir, "AGENTS.override.md");
+  for (const name of [policy, override]) {
+    await rm(name, { recursive: true, force: true });
+    await mkdir(path.join(name, "inner"), { recursive: true });
+    await writeFile(path.join(name, "inner", "f"), "x");
+    await chmod(path.join(name, "inner"), 0o000);
+    await chmod(name, 0o000);
+  }
+
+  // Act
+  const run = await runCodex("p", { systemPromptAppend: "the daemon policy" });
+
+  // Assert
+  assert.equal(run.sessionId, "thread-new");
+  assert.match(await readFile(policy, "utf8"), /the daemon policy/);
+  await assert.rejects(lstat(override), /ENOENT/);
+});
+
 test("a work directory left without write permission is writable again for the next run", async () => {
   // Arrange
   process.env.FAKE_CODEX_MODE = "ok";
