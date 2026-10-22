@@ -147,10 +147,20 @@ the order they are reached:
    Code is located by the Agent SDK, and second-guessing it here could refuse
    to start a host that works. Without the check every mention would fail at
    spawn and stay unread while the backstop retried it.
+5. **The identity check (`taskshoot --json me`) fails.** An authentication
+   failure (401 / 403, no API key configured) or a missing `taskshoot` binary
+   stops startup at once. A failure that can clear on its own — a 5xx, 408 or
+   429 response, a connection / DNS / TLS error, or a call that takes longer
+   than 30 seconds — is retried with exponential backoff (5 s, doubling, at
+   most 60 s apart) for 15 minutes — no new attempt starts after that, though
+   the one in flight may run up to its 30-second cap — with a `[startup] taskshoot me
+   failed (attempt N): ...` line on stderr per retry. If it is still failing
+   after that, the daemon exits with the last error and it is up to the
+   supervisor to start it again.
 
 `authenticated as <name> (<id>)` on stdout is the line that says startup got
-past all of this. Reaching it can take minutes on a slow or flaky connection,
-because the identity call retries.
+past all of this. Reaching it can take about 15 minutes while the API is
+unavailable, because the identity call retries.
 
 **The first run on a fresh state directory answers almost nothing that was
 already waiting.** Unread notifications older than one minute before that boot
