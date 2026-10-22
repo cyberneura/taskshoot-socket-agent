@@ -95,7 +95,13 @@ async function removeTree(target: string): Promise<void> {
   await rm(target, { recursive: true, force: true });
 }
 
-async function prepareWorkdir(systemPromptAppend: string): Promise<string> {
+/** Codex's own default for `project_doc_max_bytes`. */
+const CODEX_DEFAULT_DOC_BYTES = 32 * 1024;
+
+/** Installs the policy and returns the run directory and the policy's size. */
+async function prepareWorkdir(
+  systemPromptAppend: string,
+): Promise<{ dir: string; policyBytes: number }> {
   const dir = config.codexWorkdir;
   await mkdir(dir, { recursive: true });
   // Everything below runs unsandboxed and goes through `dir`, so a link there
@@ -121,8 +127,9 @@ async function prepareWorkdir(systemPromptAppend: string): Promise<string> {
   // Codex is not running between runs, so nothing reads the gap.
   const target = path.join(dir, "AGENTS.md");
   const staged = path.join(dir, `.AGENTS.md.${randomUUID()}`);
+  const policy = `${AGENTS_FILE_HEADER}\n\n${systemPromptAppend}\n`;
   try {
-    await writeFile(staged, `${AGENTS_FILE_HEADER}\n\n${systemPromptAppend}\n`, { flag: "wx" });
+    await writeFile(staged, policy, { flag: "wx" });
     await removeTree(target);
     await rename(staged, target);
   } catch (err) {
@@ -133,7 +140,15 @@ async function prepareWorkdir(systemPromptAppend: string): Promise<string> {
   // plant one to replace the policy for every later mention, so none survives
   // into the next run.
   await removeTree(path.join(dir, "AGENTS.override.md"));
-  return dir;
+  return { dir, policyBytes: Buffer.byteLength(policy) };
+}
+
+/** Codex reads `AGENTS.md` only up to `project_doc_max_bytes` and drops the
+ * rest without an error, so a long site policy (appended last) or a small
+ * limit in the host's config would leave the run answering without it. The
+ * limit is raised to fit, and never lowered below Codex's default. */
+function docLimitArgs(policyBytes: number): string[] {
+  return ["-c", `project_doc_max_bytes=${Math.max(CODEX_DEFAULT_DOC_BYTES, policyBytes)}`];
 }
 
 function sandboxArgs(): string[] {
@@ -224,12 +239,12 @@ function sandboxTempDirs(): string[] {
   return [...new Set(["/tmp", tmpdir(), process.env.TMPDIR].filter((d): d is string => !!d))];
 }
 
-/** True when `workdir` is one of `tempDirs` or inside one. Links are
- * resolved on both sides (macOS's `/tmp` is a link to `/private/tmp`). */
-export async function isInsideTempDir(workdir: string, tempDirs: string[]): Promise<boolean> {
-  const resolved = await resolveExisting(workdir);
-  for (const tempDir of tempDirs) {
-    const relative = path.relative(await resolveExisting(tempDir), resolved);
+/** True when `target` is one of `roots` or inside one. Links are resolved on
+ * both sides (macOS's `/tmp` is a link to `/private/tmp`). */
+export async function isInsideAny(target: string, roots: string[]): Promise<boolean> {
+  const resolved = await resolveExisting(target);
+  for (const root of roots) {
+    const relative = path.relative(await resolveExisting(root), resolved);
     // `..x` is a name inside, not a step out.
     const outside = relative === ".." || relative.startsWith(`..${path.sep}`);
     if (!outside && !path.isAbsolute(relative)) return true;
@@ -242,13 +257,20 @@ export async function preflightCodex(): Promise<void> {
   // Under a directory the sandbox can write, a run could rename the work
   // directory away and leave a link at its path; the next run's unsandboxed
   // policy install would then write and remove through that link.
-  if (
-    config.codexSandbox === "workspace-write" &&
-    (await isInsideTempDir(config.codexWorkdir, sandboxTempDirs()))
-  ) {
+  if (config.codexSandbox !== "workspace-write") return;
+  if (await isInsideAny(config.codexWorkdir, sandboxTempDirs())) {
     throw new Error(
       `TSSA_CODEX_WORKDIR must not be inside /tmp or $TMPDIR, which the sandbox lets ` +
         `the agent write: ${config.codexWorkdir}`,
+    );
+  }
+  // The state directory holds the handled-mention ledger and the sessions,
+  // written by this unsandboxed process. Where the agent can write too, a run
+  // could edit the ledger or leave a link for the next save to write through.
+  if (await isInsideAny(config.stateDir, [config.codexWorkdir, ...sandboxTempDirs()])) {
+    throw new Error(
+      `TSSA_STATE_DIR must not be inside TSSA_CODEX_WORKDIR, /tmp or $TMPDIR, which the ` +
+        `sandbox lets the agent write: ${config.stateDir}`,
     );
   }
 }
@@ -257,7 +279,7 @@ export async function runCodex(prompt: string, options: RunOptions): Promise<Age
   // Refuse rather than start something that would be killed mid-reply. The
   // mention stays unread and the next daemon answers it once.
   if (isShuttingDown()) throw runError(new Error("daemon is shutting down"), false);
-  const cwd = await prepareWorkdir(options.systemPromptAppend);
+  const { dir: cwd, policyBytes } = await prepareWorkdir(options.systemPromptAppend);
 
   // Global options go before `resume`: `codex exec [OPTIONS] resume <id> <prompt>`.
   // The prompt goes through argv, not a shell, so its newlines and quotes need
@@ -267,6 +289,7 @@ export async function runCodex(prompt: string, options: RunOptions): Promise<Age
     "--json",
     "--skip-git-repo-check",
     ...sandboxArgs(),
+    ...docLimitArgs(policyBytes),
     ...(config.codexModel ? ["--model", config.codexModel] : []),
     ...(options.resumeSessionId ? ["resume", options.resumeSessionId] : []),
     prompt,

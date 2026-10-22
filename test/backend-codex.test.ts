@@ -97,7 +97,7 @@ process.env.TSSA_STATE_DIR = dir;
 delete process.env.TSSA_CODEX_SANDBOX;
 delete process.env.TSSA_CODEX_MODEL;
 
-const { runCodex, isInsideTempDir } = await import("../src/backends/codex.js");
+const { runCodex, isInsideAny } = await import("../src/backends/codex.js");
 const { appendBounded } = await import("../src/backends/child-process.js");
 
 async function recordedRun() {
@@ -259,6 +259,21 @@ test("a work directory replaced by a link is refused before anything is written 
   }
 });
 
+test("a policy larger than Codex's default document limit raises the limit to fit", async () => {
+  // Arrange
+  // Codex drops what does not fit, and the site policy is appended last.
+  process.env.FAKE_CODEX_MODE = "ok";
+  const policy = "x".repeat(40 * 1024);
+
+  // Act
+  await runCodex("p", { systemPromptAppend: policy });
+
+  // Assert
+  const { argv } = await recordedRun();
+  const installed = await readFile(path.join(workdir, "AGENTS.md"));
+  assert.ok(argv.includes(`project_doc_max_bytes=${installed.length}`));
+});
+
 test("a work directory inside a temporary directory is recognised, links included", async () => {
   // Arrange
   const temp = await mkdtemp(path.join(tmpdir(), "tssa-codex-temp-"));
@@ -267,12 +282,12 @@ test("a work directory inside a temporary directory is recognised, links include
   await symlink(temp, linkToTemp);
 
   // Act
-  const inside = await isInsideTempDir(path.join(temp, "not-yet", "workspace"), [temp]);
-  const itself = await isInsideTempDir(temp, [temp]);
-  const throughLink = await isInsideTempDir(path.join(linkToTemp, "workspace"), [temp]);
-  const dotted = await isInsideTempDir(path.join(temp, "..x", "workspace"), [temp]);
-  const sibling = await isInsideTempDir(`${temp}-sibling/workspace`, [temp]);
-  const outside = await isInsideTempDir(path.join(elsewhere, "workspace"), [temp]);
+  const inside = await isInsideAny(path.join(temp, "not-yet", "workspace"), [temp]);
+  const itself = await isInsideAny(temp, [temp]);
+  const throughLink = await isInsideAny(path.join(linkToTemp, "workspace"), [temp]);
+  const dotted = await isInsideAny(path.join(temp, "..x", "workspace"), [temp]);
+  const sibling = await isInsideAny(`${temp}-sibling/workspace`, [temp]);
+  const outside = await isInsideAny(path.join(elsewhere, "workspace"), [temp]);
 
   // Assert
   assert.equal(inside, true);
@@ -327,6 +342,10 @@ test("sandboxes writes by default but leaves the network open for the taskshoot 
   );
   assert.ok(!argv.includes("--dangerously-bypass-approvals-and-sandbox"));
   assert.ok(!argv.includes("--model"), "an unset model is left to the host's codex config");
+  assert.ok(
+    argv.includes("project_doc_max_bytes=32768"),
+    "a host config with a smaller limit would cut the policy off",
+  );
 });
 
 test("resumes the stored session, with the options ahead of the subcommand", async () => {

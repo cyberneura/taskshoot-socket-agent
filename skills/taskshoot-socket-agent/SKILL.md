@@ -151,6 +151,8 @@ the order they are reached:
    refuses a `TSSA_CODEX_WORKDIR` inside `/tmp` or `$TMPDIR`: the sandbox lets
    the agent write there, so a run could swap the run directory for a link
    and the daemon's next, unsandboxed write of `AGENTS.md` would go through it.
+   For the same reason it refuses a `TSSA_STATE_DIR` inside the run directory,
+   `/tmp` or `$TMPDIR`: the agent could edit the handled-mention ledger.
 5. **The identity check (`taskshoot --json me`) fails.** An authentication
    failure (401 / 403, no API key configured) or a missing `taskshoot` binary
    stops startup at once. A failure that can clear on its own — a 5xx, 408 or
