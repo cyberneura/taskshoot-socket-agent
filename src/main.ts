@@ -19,7 +19,7 @@ import { startListener } from "./listen.js";
 import { acquireSingleInstanceLock } from "./lock.js";
 import { buildMentionPrompt, buildSystemPromptAppend, cliTaskRef } from "./prompt.js";
 import { insertByCreatedAt } from "./queue.js";
-import { backendPolicyNote, runAgent, type RunError } from "./runner.js";
+import { backendPolicyNote, effectivePolicy, runAgent, type RunError } from "./runner.js";
 import { closeIntake, isShuttingDown, onShutdown } from "./shutdown.js";
 import { State } from "./state.js";
 import {
@@ -61,10 +61,19 @@ async function main(): Promise<void> {
   console.log(`authenticated as ${me.display_name} (${me.id})`);
 
   const state = new State();
+  const policy = effectivePolicy();
+  if (policy !== config.policy) {
+    console.log(
+      `policy: ${policy} (TSSA_POLICY=${config.policy} needs writes the codex workspace-write sandbox blocks)`,
+    );
+  } else {
+    console.log(`policy: ${policy}`);
+  }
   const systemPromptAppend = buildSystemPromptAppend(
     me.display_name,
     config.extraSystemPrompt,
     backendPolicyNote(),
+    policy,
   );
   const wantedTypes = new Set(config.types.split(",").map((t) => t.trim()));
 

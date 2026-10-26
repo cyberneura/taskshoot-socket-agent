@@ -48,6 +48,10 @@ Usage:
 Environment:
   TSSA_NOTIFICATION_TYPES   notification types to subscribe to (task_mentioned)
   TSSA_POLL_MINUTES         polling backstop interval (30)
+  TSSA_POLICY               what the agent may do: work | safe (work: may
+                            change code, commit and open PRs on tasks with
+                            Bot Ready off that no other agent is on; safe:
+                            conversation and investigation only)
   TSSA_AGENT_BACKEND        which agent answers: claude | hermes | codex
                             (claude)
   TSSA_AGENT_TIMEOUT_MINUTES  hard timeout for one agent run (20)
@@ -76,8 +80,10 @@ Requires the \`taskshoot\` CLI (>= 0.7.0, authenticated) on PATH, plus the
 agent for the chosen backend: Claude Code (claude), the hermes CLI (hermes)
 or the codex CLI (codex).
 
-SECURITY: the agent runs unattended with tools auto-approved. On backend
-hermes there are no deny lists at all — host isolation is the only boundary.
+SECURITY: the agent runs unattended with tools auto-approved, and under
+TSSA_POLICY=work anyone who can mention it can ask it to change code. On
+backend hermes there are no deny lists at all — host isolation is the only
+boundary.
 On backend codex writes are sandboxed to the run directory and the temp
 directories by default; reads and the network are not restricted.
 Full documentation: ${pkg.homepage ?? pkg.repository?.url ?? ""}`);

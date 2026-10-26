@@ -74,9 +74,14 @@ FATAL に見える起動失敗が毎回 1 回入る)。
 - `src/sentry.ts` — オプトインのエラー報告 (DSN 無しなら全て no-op。SDK 既定が
   デーモンの挙動を変える箇所を pin している。README「Error reporting」が正本)
 - `src/state.ts` — handled-id 台帳とセッション保存 (二重返信防止の正本)
-- `skills/taskshoot-socket-agent/SKILL.md` — 配布用の agent skill
-  (`npx skills add cyberneura/taskshoot-socket-agent`)。`.claude/skills/` には置かない
-  (両方 discovery 対象なので二重に列挙される)
+- `src/prompt.ts` — エージェントの運用ポリシー。`TSSA_POLICY` で `work` (既定。Bot Ready OFF
+  で他のエージェントが触っていないタスクなら実作業可) と `safe` (会話・調査のみ) を切り替える。
+  実効ポリシーは `runner.effectivePolicy` (codex + `workspace-write` は書けないので `safe`)
+- `skills/taskshoot-socket-agent/SKILL.md` (`work` 用) と
+  `skills/taskshoot-socket-agent-safe/SKILL.md` (`safe` 用) — 配布用の agent skill
+  (`npx skills add cyberneura/taskshoot-socket-agent -s <name>`)。`.claude/skills/` には置かない
+  (両方 discovery 対象なので二重に列挙される)。2 本はポリシーの節以外ほぼ同文なので、
+  片方を直したらもう片方も直す
 
 ## 変更時の注意
 

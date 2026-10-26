@@ -24,18 +24,35 @@ taskshoot listen (WebSocket, JSON Lines)
 
 ## What it does — and does not — do
 
-- **Conversation and investigation only.** The agent answers questions, reads
-  code/logs on its host and replies in the thread. While a task has mentions
-  queued or being answered — from the moment a mention is received until its
-  run finished — the thread shows a transient "Thinking about a reply… /
+- **It answers in the thread.** The agent answers questions, reads code/logs
+  on its host and replies in the thread. While a task has mentions queued or
+  being answered — from the moment a mention is received until its run
+  finished — the thread shows a transient "Thinking about a reply… /
   回答を考えています…" activity indicator (`taskshoot task activity`,
   CLI 0.8.0+; skipped on older CLIs).
-- **It never starts real work.** Code changes, PRs and merges are gated by the
-  task's *Bot Ready* flag and executed by a separate agent loop (see the
-  `taskshoot-agent-loop` skill in taskshoot-cli). When a mention asks for
-  work, the reply asks the requester to assign the task to the bot and enable
-  Bot Ready — or, if that is already the case, says the work will be picked up
-  shortly.
+- **Real work depends on the policy (`TSSA_POLICY`).**
+  - `work` (the default): when a mention asks for work, the agent may change
+    code, commit on a new branch, push it and open a pull request — but only
+    if the task's *Bot Ready* flag is **off**, the task is unassigned or
+    assigned to the bot or the requester, nobody else shows as active on the
+    thread, and the work fits in one run (`TSSA_AGENT_TIMEOUT_MINUTES`). It
+    claims an unassigned task with `taskshoot task claim --if-unassigned`
+    first, works on a `mention/` branch and re-checks Bot Ready before every
+    commit and push. Merging and deploying need an explicit request.
+  - `safe`: conversation and investigation only. Code changes, PRs and merges
+    are left to a separate agent loop (see the `taskshoot-agent-loop` skill in
+    taskshoot-cli); the reply asks the requester to assign the task to the bot
+    and enable Bot Ready — or, if that is already the case, says the work will
+    be picked up shortly.
+
+  Under both, a task with Bot Ready **on** is left to the agent loop: agent
+  loops only pick up Bot Ready tasks, which is what keeps the responder and a
+  loop from working the same task — the assignee and activity checks cannot,
+  when the loop runs as the same bot user. The policy is guidance to the model, not
+  enforcement (see the security model). On the `codex` backend with the
+  default `workspace-write` sandbox the agent cannot write outside its run
+  directory, so it is given `safe` whatever `TSSA_POLICY` says (startup logs
+  `policy: safe (...)`).
 - **Label mentions get no reply.** A mention that merely names the bot
   ("@bot can handle this") is detected by the agent and deliberately ignored.
 - **Self-mentions never arrive**: the Taskshoot server does not notify the
@@ -101,6 +118,7 @@ environment. Deployment templates (both variants):
 |---|---|---|
 | `TSSA_NOTIFICATION_TYPES` | `task_mentioned` | Notification types to subscribe to (comma-separated) |
 | `TSSA_POLL_MINUTES` | `30` | Polling backstop interval |
+| `TSSA_POLICY` | `work` | What the agent may do beyond talking: `work` (code changes, commits and PRs on tasks with Bot Ready off that no other agent is on) or `safe` (conversation and investigation only) |
 | `TSSA_AGENT_BACKEND` | `claude` | Which agent runs a mention: `claude` (Agent SDK, in-process), `hermes` (Hermes CLI) or `codex` (Codex CLI) |
 | `TSSA_AGENT_TIMEOUT_MINUTES` | `20` | Hard timeout for one agent run |
 | `TSSA_AGENT_CWD` | `~/workspace` | Working directory for the agent (backend `claude` only) |
@@ -116,6 +134,19 @@ environment. Deployment templates (both variants):
 | `TSSA_SENTRY_DSN` | (empty) | Sentry DSN. Empty disables error reporting entirely |
 | `TSSA_SENTRY_ENVIRONMENT` | (SDK default) | Sentry `environment`. The host is already identifiable from `server_name`, so this is for grouping deployments, not hosts |
 | `TSSA_EXTRA_PATH` | (empty) | Prepended to PATH by `bin/start.sh` |
+
+`TSSA_EXTRA_SYSTEM_PROMPT` comes after the policy (and after any backend
+note), so a site rule placed there has the last word — use it to narrow the
+policy for one host (which repositories may be touched, a branch naming rule,
+"never merge") or to add host facts the agent should know. It is plain text
+and may span lines; in a `.env` read by `bin/start.sh`, quote it:
+
+```bash
+TSSA_EXTRA_SYSTEM_PROMPT='## Site policy
+
+- Work only in repositories under ~/workspace owned by the example-org organization.
+- Branch names start with bot/.'
+```
 
 ## Design notes
 
@@ -417,8 +448,12 @@ call site into a single issue.
 The daemon runs its agent unattended and approves every tool automatically,
 because there is no human at the prompt. **That does not protect against
 prompt injection**: anyone who can write into a task thread the bot reads can
-try to steer the agent. The operating policy ("no real work, no secrets") is
-guidance the model follows, not enforcement.
+try to steer the agent. Under `TSSA_POLICY=work` that includes asking it, in
+plain words, to change code and push — that is what the policy is for, so the
+people who can mention the bot are the people who can get code pushed from
+this host. The operating policy (its conditions for real work, "no secrets")
+is guidance the model follows, not enforcement; `TSSA_POLICY=safe` narrows the
+guidance, it does not add a barrier.
 
 What enforcement exists depends on the backend:
 
@@ -441,7 +476,8 @@ only where host isolation alone is an acceptable boundary.
 On the `codex` backend the default sandbox stops the agent from changing files
 outside its run directory and the temporary directories (`/tmp`, `$TMPDIR` —
 still writable, which matters on a shared host), which is the part of "no real
-work" a sandbox can enforce. It does not stop the agent from reading a credential file and posting
+work" a sandbox can enforce (and why that combination always runs the `safe`
+policy). It does not stop the agent from reading a credential file and posting
 it: reads are unrestricted and the network has to stay open for the `taskshoot`
 CLI. `TSSA_CODEX_SANDBOX=danger-full-access` removes the sandbox and puts this
 backend in the same position as `hermes`.
@@ -467,15 +503,21 @@ deploy this daemon.
 
 ## Agent skill
 
-The repository carries an agent skill (`skills/taskshoot-socket-agent/`) that
-tells a coding agent how to deploy, configure and troubleshoot this daemon:
+The repository carries two agent skills that tell a coding agent how to
+deploy, configure and troubleshoot this daemon — one per policy. Install the
+one matching the policy you run:
 
 ```bash
-npx skills add cyberneura/taskshoot-socket-agent
+# TSSA_POLICY=work (the default)
+npx skills add cyberneura/taskshoot-socket-agent -s taskshoot-socket-agent
+# TSSA_POLICY=safe
+npx skills add cyberneura/taskshoot-socket-agent -s taskshoot-socket-agent-safe
 ```
 
-It is agent-independent: one file, in the layout that agents supporting the
-`skills/` convention read.
+Without `-s` the CLI offers both; installing both gives the agent two
+contradicting descriptions of the same daemon. They are agent-independent:
+one file each, in the layout that agents supporting the `skills/` convention
+read.
 
 ## License
 
