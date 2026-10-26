@@ -49,6 +49,12 @@ export const config = {
    * stays `claude` so existing hosts are unaffected by adding a backend. */
   agentBackend: enumEnv("TSSA_AGENT_BACKEND", ["claude", "hermes", "codex"], "claude"),
 
+  /** What the responder may do beyond talking. `work` lets it change code,
+   * commit and open pull requests on tasks no agent loop can be on (Bot Ready
+   * off, nobody else at work); `safe` keeps it to conversation and leaves all
+   * real work to the loop. */
+  policy: enumEnv("TSSA_POLICY", ["work", "safe"], "work"),
+
   /** Hard timeout for one agent run. */
   agentTimeoutMinutes: intEnv("TSSA_AGENT_TIMEOUT_MINUTES", 20),
 

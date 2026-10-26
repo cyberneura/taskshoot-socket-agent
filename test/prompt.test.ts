@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { config } from "../src/config.js";
 import { buildSystemPromptAppend, cliTaskRef } from "../src/prompt.js";
 import { cliTaskArgs } from "../src/taskshoot.js";
 import type { Notification } from "../src/taskshoot.js";
@@ -102,4 +103,60 @@ test("the system prompt carries the bot name and the site extra", () => {
   assert.ok(prompt.includes('"millais"'));
   assert.ok(prompt.includes("NO_REPLY"));
   assert.ok(prompt.endsWith("EXTRA POLICY LINE"));
+});
+
+test("the work policy gates real work on Bot Ready being off", () => {
+  // Arrange / Act
+  const prompt = buildSystemPromptAppend("millais", "", "", "work");
+
+  // Assert
+  // Agent loops only take Bot Ready tasks, so this gate is what keeps the
+  // responder and a loop off the same task.
+  assert.ok(prompt.includes("**Bot Ready is off.**"));
+  // The claim is the marker other agents read; without --if-unassigned two
+  // agents could both take an unassigned task.
+  assert.ok(prompt.includes("task claim <ref> --if-unassigned"));
+  assert.ok(prompt.includes("task activity <ref> --json"));
+  assert.ok(prompt.includes("Never commit to the default\n  branch directly"));
+  assert.ok(prompt.includes("before every commit and every push"));
+  assert.ok(!prompt.includes("Do not modify repositories"));
+});
+
+test("the work policy tells the agent how long its run may take", () => {
+  // Arrange / Act
+  const prompt = buildSystemPromptAppend("millais", "", "", "work");
+
+  // Assert
+  // The agent cannot otherwise know the timeout, and a run cut off midway
+  // leaves half-done work behind.
+  assert.ok(prompt.includes(`stopped after ${config.agentTimeoutMinutes} minutes`));
+});
+
+test("the safe policy keeps all real work with the agent loop", () => {
+  // Arrange / Act
+  const prompt = buildSystemPromptAppend("millais", "", "", "safe");
+
+  // Assert
+  assert.ok(prompt.includes("Do not modify repositories, create branches, or push"));
+  assert.ok(!prompt.includes("--if-unassigned"));
+});
+
+test("work is the default policy", () => {
+  // Arrange / Act
+  const implicit = buildSystemPromptAppend("millais", "SITE POLICY", "NOTE");
+  const explicit = buildSystemPromptAppend("millais", "SITE POLICY", "NOTE", "work");
+
+  // Assert
+  assert.equal(implicit, explicit);
+});
+
+test("the site policy stays last under either policy", () => {
+  for (const policy of ["work", "safe"] as const) {
+    // Arrange / Act
+    const prompt = buildSystemPromptAppend("millais", "SITE POLICY", "BACKEND NOTE", policy);
+
+    // Assert
+    assert.ok(prompt.indexOf("BACKEND NOTE") > prompt.indexOf("## Safety"), policy);
+    assert.ok(prompt.endsWith("SITE POLICY"), policy);
+  }
 });

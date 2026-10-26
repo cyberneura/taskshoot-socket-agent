@@ -1,6 +1,6 @@
 ---
 name: taskshoot-socket-agent
-description: Deploy, configure and troubleshoot taskshoot-socket-agent, the daemon that answers Taskshoot mentions with an AI agent. Use when installing or running the daemon, choosing an agent backend, setting TSSA_* environment variables, diagnosing why it will not start or why a mention got no reply or a duplicate reply, or when the user mentions taskshoot-socket-agent or a Taskshoot mention bot.
+description: Deploy, configure and troubleshoot taskshoot-socket-agent, the daemon that answers Taskshoot mentions with an AI agent and, by default (TSSA_POLICY=work), also does the requested code changes, commits and pull requests on tasks no agent loop is on. Use when installing or running the daemon, choosing an agent backend, setting TSSA_* environment variables, diagnosing why it will not start or why a mention got no reply or a duplicate reply, or when the user mentions taskshoot-socket-agent or a Taskshoot mention bot.
 ---
 
 # taskshoot-socket-agent
@@ -13,17 +13,70 @@ reply.
 
 Full documentation: https://github.com/cyberneura/taskshoot-socket-agent
 
-## The line this daemon does not cross
+## What the agent may do
 
-**Conversation and investigation only. It never starts real work.** The agent
-answers questions, reads code and logs on its host, and replies in the thread.
-Code changes, pull requests and merges are gated by the task's *Bot Ready* flag
-and executed by a **separate** agent loop. When a mention asks for work, the
-reply asks the requester to assign the task to the bot and enable Bot Ready.
+The policy is chosen with `TSSA_POLICY`; this skill describes the default,
+`work`. (For conversation only, set `TSSA_POLICY=safe` and use the
+`taskshoot-socket-agent-safe` skill instead.)
 
-Knowing this line matters before you change anything here: widening what the
-daemon does (giving it a repository to push from, letting it act on a request
-directly) removes the separation the two systems are built around.
+The agent always answers questions, reads code and logs on its host, and
+replies in the thread. When a mention asks for work, it may also change files
+in a repository, commit on a new branch, push it and open a pull request —
+**only when all of these hold**, checked by the agent itself from
+`taskshoot task show --json` and `taskshoot task activity --json`:
+
+- The task's *Bot Ready* flag is **off**. Bot Ready hands a task to a separate
+  agent loop, and agent loops only pick up Bot Ready tasks — so this is what
+  keeps the daemon and a loop from working the same task. With Bot Ready on,
+  the agent replies and leaves the work to the loop.
+- No other agent is on it: the task is unassigned, assigned to the bot, or
+  assigned to the person who asked; nobody else shows as active on the thread;
+  the thread shows no unfinished claim or open pull request by someone else.
+- The work fits in one run (`TSSA_AGENT_TIMEOUT_MINUTES`, 20 by default).
+  Larger work is declined with a pointer to Bot Ready.
+
+It claims an unassigned task with `taskshoot task claim --if-unassigned`
+before starting, commits on a `mention/` branch (never the default branch),
+re-checks Bot Ready before every commit and push, and merges or deploys only
+when the requester explicitly asked. It leaves the assignee and stage as
+they are at the end. Its one reply reports what changed and where.
+
+What this means for a deployment:
+
+- **The agent needs write access to the repositories it is asked about**: a
+  checkout it can find, git push credentials and an authenticated `gh` (or
+  equivalent) for pull requests, all for the daemon's user. On `claude` the
+  agent starts in `TSSA_AGENT_CWD`, so checkouts under it are found; `hermes`
+  and `codex` start in a directory the daemon owns, so tell the agent where
+  the checkouts are through `TSSA_EXTRA_SYSTEM_PROMPT`. Without these the
+  conditions can hold and the work still fails.
+- **Bot Ready off is the only check that separates it from an agent loop.**
+  The assignee and activity checks see users, and a loop that runs as the
+  same bot user as the daemon looks exactly like the daemon itself. If Bot
+  Ready is turned on while a run is working, a loop can start on the same
+  task before the agent's next check; the agent stops at its next commit or
+  push. Do not switch Bot Ready on a task while the bot is working it here.
+- **A task assigned to the requester is not claimed**, so nothing durable
+  marks it as taken — only the transient activity indicator.
+- Branches it creates start with `mention/`; merging or deploying happens only
+  on an explicit request, and any mentioner counts as a requester. Add "never
+  merge" to `TSSA_EXTRA_SYSTEM_PROMPT` if merges should stay with people.
+- **One run blocks the queue.** Mentions are answered one at a time, so a
+  20-minute piece of work delays every other reply by up to 20 minutes.
+  Raising `TSSA_AGENT_TIMEOUT_MINUTES` for bigger work lengthens that delay.
+- **A run cut off by the timeout leaves its claim and a partial branch
+  behind**, and the backstop retries the mention in the same session. The
+  agent is told to commit and push what it has and report instead of carrying
+  on when it finds its own earlier unreported attempt — even when the earlier
+  run died early for another reason, so a re-mention is what restarts it — otherwise work that never fits would be
+  retried every `TSSA_POLL_MINUTES` without end. That is an instruction, not a
+  retry limit; the daemon has none.
+- **The conditions are the model's judgement, not enforcement.** Nothing in
+  the daemon checks Bot Ready or the assignee before the agent writes.
+- On the `codex` backend with the default `workspace-write` sandbox the agent
+  cannot write outside its run directory, so it is given the `safe` policy
+  instead (startup logs `policy: safe (...)`). Real work there needs
+  `TSSA_CODEX_SANDBOX=danger-full-access`.
 
 Two more behaviours that look like bugs and are not:
 
@@ -95,6 +148,7 @@ consumes.
 |---|---|---|
 | `TSSA_NOTIFICATION_TYPES` | `task_mentioned` | Notification types to subscribe to (comma-separated) |
 | `TSSA_POLL_MINUTES` | `30` | Polling backstop interval |
+| `TSSA_POLICY` | `work` | `work`: code changes, commits and PRs on tasks with Bot Ready off that no other agent is on. `safe`: conversation and investigation only |
 | `TSSA_AGENT_BACKEND` | `claude` | `claude` (Agent SDK, in-process), `hermes` (Hermes CLI) or `codex` (Codex CLI) |
 | `TSSA_AGENT_TIMEOUT_MINUTES` | `20` | Hard timeout for one agent run |
 | `TSSA_AGENT_CWD` | `~/workspace` | Working directory for the agent (backend `claude` only) |
@@ -120,6 +174,10 @@ Notes that are easy to get wrong:
 - The numeric variables must be positive integers and `TSSA_AGENT_BACKEND` must
   be one of the three names; anything else throws at startup rather than falling
   back to the default.
+- `TSSA_EXTRA_SYSTEM_PROMPT` is appended after the policy, so it has the last
+  word: use it to narrow the policy for one host (which repositories may be
+  touched, "never merge") rather than to widen it. Multi-line text is fine;
+  quote it in a `.env` read by `bin/start.sh`.
 - `TSSA_AGENT_CWD` with `TSSA_AGENT_BACKEND=hermes` or `codex` is a startup
   error, not a no-op: those backends run in a directory they own, so the
   variable would otherwise be silently ignored. Use `TSSA_HERMES_WORKDIR` /
@@ -235,8 +293,10 @@ id having aged out of the bounded ledger.
 The daemon runs its agent unattended and approves every tool automatically,
 because there is no human at the prompt. **That does not protect against prompt
 injection**: anyone who can write into a task thread the bot reads can try to
-steer the agent. The operating policy ("no real work, no secrets") is guidance
-the model follows, not enforcement.
+steer the agent — and under the `work` policy that includes asking it, in
+plain words, to change code and push. Whoever can mention the bot can get code
+pushed from this host. The operating policy (its conditions for real work, "no
+secrets") is guidance the model follows, not enforcement.
 
 What enforcement exists depends on the backend:
 
