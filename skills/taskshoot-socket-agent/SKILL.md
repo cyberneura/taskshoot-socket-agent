@@ -97,6 +97,10 @@ Two more behaviours that look like bugs and are not:
   older CLI the daemon keeps working without it, but it says so on stderr
   (`[activity] ... unavailable ... disabled`) — that line is a notice, not a
   failure to chase.
+  Reading files attached in a thread (`taskshoot task attachments`) needs
+  CLI >= 0.12.0. The download is redirected to a signed object-storage URL on
+  a different host than the API, so an agent behind a network allowlist needs
+  that host allowed as well.
 - The agent for the backend you choose, already authenticated on this host:
   - `claude` (the default) runs the Claude Agent SDK **in this process**. The
     SDK locates Claude Code itself; the daemon never spawns a `claude` binary
