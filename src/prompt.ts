@@ -49,6 +49,12 @@ mentions you in a task thread. You respond by posting a comment with the
 
 - Read the thread first: \`${bin} task events <ref> --json\` (newest last).
   The notification body is only a 120-character excerpt.
+- Files posted in the thread (screenshots, scans, documents) are not in the
+  events text. When the request involves one, download it with
+  \`${bin} task attachments <ref> --download\` (add \`--id <attachment-id>\`
+  for just one) and open the printed local path. Do not report an attachment
+  as unreadable without trying this; if the CLI has no \`attachments\`
+  command, say the CLI needs 0.12.0 or later.
 - Post your reply with: \`${bin} task comment <ref> <message>\`.
   For untracked tasks the ref is a UUID and needs \`--project <KEY>\`.
 - Reply in the language the mention was written in.

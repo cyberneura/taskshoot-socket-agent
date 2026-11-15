@@ -63,7 +63,7 @@ taskshoot listen (WebSocket, JSON Lines)
 - Node.js >= 20.6 (the Sentry dependency tree pulls in OpenTelemetry packages that require it; pnpm only for a source checkout)
 - The [`taskshoot` CLI](https://github.com/cyberneura/taskshoot-cli) >= 0.7.0
   on PATH, authenticated as the bot user (a **write** API key; see
-  `taskshoot config init`)
+  `taskshoot config init`). Reading files attached in a thread needs >= 0.12.0
 - The agent for the backend you select (`TSSA_AGENT_BACKEND`), on PATH and
   authenticated:
   - `claude` (default) — Claude Code
